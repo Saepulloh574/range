@@ -20,13 +20,44 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 CHROME_DEBUG_URL = os.getenv("CHROME_DEBUG_URL")
 TARGET_URL = os.getenv("TARGET_URL")
 
-# Logika untuk konversi kode negara ke emoji
-def get_country_emoji(country_name):
-    """Mengembalikan emoji untuk Myanmar, default ke ❓ untuk negara lain."""
-    if "Myanmar" in country_name:
-        return "🇲🇲"
-    # Tambahkan negara lain jika diperlukan
-    return "❓"
+# Dictionary negara ke emoji
+COUNTRY_EMOJI = {
+    "AFGHANISTAN": "🇦🇫", "ALBANIA": "🇦🇱", "ALGERIA": "🇩🇿", "ANDORRA": "🇦🇩", "ANGOLA": "🇦🇴",
+    "ANTIGUA AND BARBUDA": "🇦🇬", "ARGENTINA": "🇦🇷", "ARMENIA": "🇦🇲", "AUSTRALIA": "🇦🇺", "AUSTRIA": "🇦🇹",
+    "AZERBAIJAN": "🇦🇿", "BAHAMAS": "🇧🇸", "BAHRAIN": "🇧🇭", "BANGLADESH": "🇧🇩", "BARBADOS": "🇧🇧",
+    "BELARUS": "🇧🇾", "BELGIUM": "🇧🇪", "BELIZE": "🇧🇿", "BENIN": "🇧🇯", "BHUTAN": "🇧🇹",
+    "BOLIVIA": "🇧🇴", "BOSNIA AND HERZEGOVINA": "🇧🇦", "BOTSWANA": "🇧🇼", "BRAZIL": "🇧🇷", "BRUNEI": "🇧🇳",
+    "BULGARIA": "🇧🇬", "BURKINA FASO": "🇧🇫", "BURUNDI": "🇧🇮", "CAMBODIA": "🇰🇭", "CAMEROON": "🇨🇲",
+    "CANADA": "🇨🇦", "CAPE VERDE": "🇨🇻", "CENTRAL AFRICAN REPUBLIC": "🇨🇫", "CHAD": "🇹🇩", "CHILE": "🇨🇱",
+    "CHINA": "🇨🇳", "COLOMBIA": "🇨🇴", "COMOROS": "🇰🇲", "CONGO": "🇨🇬", "COSTA RICA": "🇨🇷",
+    "CROATIA": "🇭🇷", "CUBA": "🇨🇺", "CYPRUS": "🇨🇾", "CZECH REPUBLIC": "🇨🇿", "IVORY COAST": "🇨🇮",
+    "DENMARK": "🇩🇰", "DJIBOUTI": "🇩🇯", "DOMINICA": "🇩🇲", "DOMINICAN REPUBLIC": "🇩🇴", "ECUADOR": "🇪🇨",
+    "EGYPT": "🇪🇬", "EL SALVADOR": "🇸🇻", "EQUATORIAL GUINEA": "🇬🇶", "ERITREA": "🇪🇷", "ESTONIA": "🇪🇪",
+    "ESWATINI": "🇸🇿", "ETHIOPIA": "🇪🇹", "FIJI": "🇫🇯", "FINLAND": "🇫🇮", "FRANCE": "🇫🇷",
+    "GERMANY": "🇩🇪", "GHANA": "🇬🇭", "GREECE": "🇬🇷", "GUATEMALA": "🇬🇹", "GUINEA": "🇬🇳",
+    "GUINEA-BISSAU": "🇬🇼", "GUYANA": "🇬🇾", "HAITI": "🇭🇹", "HONDURAS": "🇭🇳", "HUNGARY": "🇭🇺",
+    "ICELAND": "🇮🇸", "INDIA": "🇮🇳", "INDONESIA": "🇮🇩", "IRAN": "🇮🇷", "IRAQ": "🇮🇶",
+    "IRELAND": "🇮🇪", "ISRAEL": "🇮🇱", "ITALY": "🇮🇹", "JAPAN": "🇯🇵", "JORDAN": "🇯🇴",
+    "KAZAKHSTAN": "🇰🇿", "KENYA": "🇰🇪", "KUWAIT": "🇰🇼", "LAOS": "🇱🇦", "LATVIA": "🇱🇻",
+    "LEBANON": "🇱🇧", "LIBYA": "🇱🇾", "LITHUANIA": "🇱🇹", "LUXEMBOURG": "🇱🇺",
+    "MALAYSIA": "🇲🇾", "MEXICO": "🇲🇽", "MONGOLIA": "🇲🇳", "MOROCCO": "🇲🇦",
+    "MYANMAR": "🇲🇲", "NEPAL": "🇳🇵", "NETHERLANDS": "🇳🇱", "NEW ZEALAND": "🇳🇿",
+    "NIGERIA": "🇳🇬", "NORTH KOREA": "🇰🇵", "NORWAY": "🇳🇴",
+    "PAKISTAN": "🇵🇰", "PHILIPPINES": "🇵🇭", "POLAND": "🇵🇱", "PORTUGAL": "🇵🇹",
+    "QATAR": "🇶🇦", "ROMANIA": "🇷🇴", "RUSSIA": "🇷🇺", "SAUDI ARABIA": "🇸🇦",
+    "SINGAPORE": "🇸🇬", "SOUTH AFRICA": "🇿🇦", "SOUTH KOREA": "🇰🇷",
+    "SPAIN": "🇪🇸", "SRI LANKA": "🇱🇰", "SWEDEN": "🇸🇪", "SWITZERLAND": "🇨🇭",
+    "THAILAND": "🇹🇭", "TURKEY": "🇹🇷", "UKRAINE": "🇺🇦",
+    "UNITED KINGDOM": "🇬🇧", "UNITED STATES": "🇺🇸",
+    "VIETNAM": "🇻🇳", "YEMEN": "🇾🇪", "ZIMBABWE": "🇿🇼"
+}
+
+def get_country_emoji(country_name: str) -> str:
+    """
+    Mengembalikan emoji bendera negara.
+    Jika negara tidak ditemukan, akan mengembalikan ❓
+    """
+    return COUNTRY_EMOJI.get(country_name.upper(), "❓")
 
 # Logika untuk format pesan Telegram
 def format_telegram_message(range_val, count, country_name, service, full_message):
