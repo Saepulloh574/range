@@ -15,12 +15,21 @@ from telegram.ext import ApplicationBuilder
 # Muat variabel dari .env
 load_dotenv()
 
+# ==================== KONFIGURASI ====================
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 CHROME_DEBUG_URL = os.getenv("CHROME_DEBUG_URL")
 TARGET_URL = os.getenv("TARGET_URL")
 
+# >>> SOLUSI: TENTUKAN JALUR CHROME EXECUTABLE <<<
+# Ini memberitahu Pyppeteer untuk melewati proses unduhan Chromium yang gagal.
+# Ganti dengan jalur Chrome Anda yang sebenarnya, diambil dari perintah PowerShell.
+CHROME_EXECUTABLE_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+# =======================================================
+
+
 # Dictionary negara ke emoji
+# ... (COUNTRY_EMOJI Dibiarkan sama)
 COUNTRY_EMOJI = {
     "AFGHANISTAN": "🇦🇫", "ALBANIA": "🇦🇱", "ALGERIA": "🇩🇿", "ANDORRA": "🇦🇩", "ANGOLA": "🇦🇴",
     "ANTIGUA AND BARBUDA": "🇦🇬", "ARGENTINA": "🇦🇷", "ARMENIA": "🇦🇲", "AUSTRALIA": "🇦🇺", "AUSTRIA": "🇦🇹",
@@ -53,6 +62,7 @@ COUNTRY_EMOJI = {
 }
 
 def get_country_emoji(country_name: str) -> str:
+    # ... (Fungsi ini dibiarkan sama)
     """
     Mengembalikan emoji bendera negara.
     Jika negara tidak ditemukan, akan mengembalikan ❓
@@ -61,6 +71,7 @@ def get_country_emoji(country_name: str) -> str:
 
 # Logika untuk format pesan Telegram
 def format_telegram_message(range_val, count, country_name, service, full_message):
+    # ... (Fungsi ini dibiarkan sama)
     """Membuat teks pesan Telegram dengan format yang diminta."""
     country_emoji = get_country_emoji(country_name)
     
@@ -79,6 +90,7 @@ def format_telegram_message(range_val, count, country_name, service, full_messag
 
 # Logika untuk membuat keyboard inline Telegram
 def create_keyboard():
+    # ... (Fungsi ini dibiarkan sama)
     """Membuat keyboard inline untuk pesan Telegram."""
     keyboard = [
         [
@@ -94,6 +106,7 @@ def create_keyboard():
 SENT_MESSAGES = {}
 
 async def send_or_edit_telegram_message(app, range_val, country, service, message_text, is_new_entry):
+    # ... (Fungsi ini dibiarkan sama)
     """
     Mengirim pesan baru atau mengedit pesan yang sudah ada di Telegram.
     
@@ -136,6 +149,7 @@ async def send_or_edit_telegram_message(app, range_val, country, service, messag
         print(f"❌ Gagal mengirim/mengedit pesan Telegram: {e}")
 
 async def delete_telegram_message(app, message_id, range_val):
+    # ... (Fungsi ini dibiarkan sama)
     """Menghapus pesan dari Telegram."""
     try:
         await app.bot.delete_message(chat_id=CHAT_ID, message_id=message_id)
@@ -145,6 +159,7 @@ async def delete_telegram_message(app, message_id, range_val):
         print(f"⚠️ Gagal menghapus pesan {message_id} untuk {range_val} (Mungkin sudah terhapus): {e}")
 
 async def cleanup_old_messages(app):
+    # ... (Fungsi ini dibiarkan sama)
     """Menghapus pesan dari SENT_MESSAGES jika sudah lebih dari 10 menit tanpa update."""
     global SENT_MESSAGES
     ten_minutes_ago = datetime.now() - timedelta(minutes=10)
@@ -172,11 +187,11 @@ async def scrape_and_send(app):
     try:
         # Koneksi ke Chrome Debugger yang sudah berjalan
         browser = await launch(
-            # headless=True, # Set ke False jika ingin melihat browser (Tidak disarankan untuk koneksi ke debugger yang sudah ada)
-            # Karena Anda meminta menggunakan debugger yang sudah terbuka, kita harus menggunakan koneksi websocket
+            # Tambahkan executablePath untuk memaksa Pyppeteer menggunakan Chrome yang ada
+            executablePath=CHROME_EXECUTABLE_PATH,
             # browserWSEndpoint harus diset dengan URL dari .env
             browserWSEndpoint=CHROME_DEBUG_URL,
-            args=['--no-sandbox'] # Penting untuk lingkungan Linux
+            args=['--no-sandbox']
         )
         print(f"🔗 Terhubung ke Chrome Debugger: {CHROME_DEBUG_URL}")
 
@@ -189,7 +204,11 @@ async def scrape_and_send(app):
         print("❌ Timeout saat membuka halaman atau koneksi Pyppeteer.")
         return
     except Exception as e:
+        # Tampilkan error yang lebih spesifik jika executablePath salah
         print(f"❌ Gagal terhubung ke Chrome Debugger atau membuka halaman: {e}")
+        # Jika error karena path, beri petunjuk:
+        if "No such file or directory" in str(e):
+             print(f"⚠️ Cek apakah jalur CHROME_EXECUTABLE_PATH: {CHROME_EXECUTABLE_PATH} sudah benar.")
         return
 
     # Loop scraping
@@ -334,6 +353,8 @@ async def main():
 
 if __name__ == "__main__":
     try:
+        # PENTING: Untuk menghindari error Chromium saat menggunakan launch/connect
+        # Pastikan CHROME_EXECUTABLE_PATH sudah diatur dengan benar di awal skrip.
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nScraper dihentikan oleh pengguna.")
