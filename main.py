@@ -5,33 +5,34 @@ import json
 import time
 from datetime import datetime, timedelta, timezone
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
-from bs4 import BeautifulSoup
+# Menghapus: from bs4 import BeautifulSoup
 from typing import Dict, Any, List
-import requests
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder 
+import requests # Masih diperlukan untuk send_tg jika admin message diperlukan
 
 # ==================== KONFIGURASI DENGAN NILAI TETAP ====================
-# *** PASTIKAN SEMUA NILAI DI SINI SESUAI DENGAN KEBUTUHAN ANDA ***
 
 # Konfigurasi Telegram
 BOT_TOKEN = "7777855547:AAGTwJ01fjxjbd2TLJd8wmSEnUabD_yu2G4"
 CHAT_ID = "-1003358198353"
-ADMIN_ID = -1003358198353 # Gunakan CHAT_ID sebagai target default admin jika tidak ada
+ADMIN_ID = 7184123643 
 
 # Konfigurasi Chrome/Playwright
-# Pastikan Chrome/Edge berjalan dengan --remote-debugging-port=9222
 CHROME_DEBUG_URL = "http://127.0.0.1:9222" # URL CDP standar
-DASHBOARD_URL = "https://x.mnitnetwork.com/mdashboard/getnum" 
+# *** TELAH DIKOREKSI KE CONSOLE ***
+DASHBOARD_URL = "https://x.mnitnetwork.com/mdashboard/console" 
 LOGIN_URL = "https://x.mnitnetwork.com/mauth/login" 
 
-# ==================== GLOBAL STATE & UTILS (Diambil dari skrip pertama) ====================
+# ==================== GLOBAL STATE & UTILS (SAMA) ====================
 
-LAST_ID = 0
+SENT_MESSAGES = {} 
 GLOBAL_ASYNC_LOOP = None 
 
-# --- OTP Cache/Filter (Untuk mencegah duplikasi) ---
-class OTPFilter:
+# --- Filter Pesan Unik (MessageFilter) ---
+class MessageFilter:
     CLEANUP_KEY = '__LAST_CLEANUP_GMT__' 
-    def __init__(self, file='otp_cache_mnit.json'): 
+    def __init__(self, file='range_cache_mnit.json'): 
         self.file = file
         self.cache = self._load()
         self.last_cleanup_date_gmt = self.cache.pop(self.CLEANUP_KEY, '19700101') 
@@ -55,7 +56,7 @@ class OTPFilter:
     def _cleanup(self):
         now_gmt = datetime.now(timezone.utc).strftime('%Y%m%d')
         if now_gmt > self.last_cleanup_date_gmt:
-            print("🚨 Cache OTP Harian direset.")
+            print("🚨 Cache Harian Range direset.")
             self.cache = {} 
             self.last_cleanup_date_gmt = now_gmt
             self._save()
@@ -63,36 +64,38 @@ class OTPFilter:
             self._save()
         
     def key(self, d: Dict[str, Any]) -> str: 
-        return f"{d.get('otp')}_{d.get('phone')}"
+        phone = d.get('range_key')
+        raw_message = d.get('raw_message')
+        return f"{phone}_{hash(raw_message)}"
     
     def is_dup(self, d: Dict[str, Any]) -> bool:
         self._cleanup() 
         key = self.key(d)
-        if not key or key.split('_')[0] == 'None': return False 
+        if not key or key.startswith('N/A'): return False 
         return key in self.cache
         
     def add(self, d: Dict[str, Any]):
         key = self.key(d)
-        if not key or key.split('_')[0] == 'None': return
+        if not key or key.startswith('N/A'): return
         self.cache[key] = {'timestamp':datetime.now().isoformat()} 
         self._save()
         
     def filter(self, lst: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         out = []
         for d in lst:
-            if d.get('otp') and d.get('phone') != 'N/A':
+            if d.get('range_key') != 'N/A' and d.get('raw_message'):
                 if not self.is_dup(d):
                     out.append(d)
                     self.add(d) 
         return out
-otp_filter = OTPFilter()
+message_filter = MessageFilter()
 
-# --- Utility Functions (Disesuaikan dari skrip pertama) ---
+# --- Utility Functions (SAMA) ---
 
 COUNTRY_EMOJI = {
     "NEPAL": "🇳🇵", "IVORY COAST": "🇨🇮", "GUINEA": "🇬🇳", "CENTRAL AFRIKA": "🇨🇫", 
     "TOGO": "🇹🇬", "TAJIKISTAN": "🇹🇯", "BENIN": "🇧🇯", "SIERRA LEONE": "🇸🇱", 
-    "MADAGASCAR": "🇲🇬", "AFGANISTAN": "🇦🇫", "INDONESIA": "🇮🇩"
+    "MADAGASCAR": "🇲🇬", "AFGANISTAN": "🇦🇫", "INDONESIA": "🇮🇩", "UNITED STATES": "🇺🇸" 
 }
 def get_country_emoji(country_name: str) -> str:
     return COUNTRY_EMOJI.get(country_name.strip().upper(), "❓")
@@ -100,18 +103,15 @@ def get_country_emoji(country_name: str) -> str:
 def clean_phone_number(phone):
     if not phone: return "N/A"
     cleaned = re.sub(r'[^\d+]', '', phone)
-    if cleaned and not cleaned.startswith('+') and cleaned != 'N/A':
-        cleaned = '+' + cleaned
     return cleaned or phone
 
 def mask_phone_number(phone, visible_start=4, visible_end=4):
     if not phone or phone == "N/A": return phone
     prefix = ""
+    digits = phone
     if phone.startswith('+'):
         prefix = '+'
         digits = phone[1:]
-    else:
-        digits = phone
         
     if len(digits) <= visible_start + visible_end:
         return phone
@@ -124,32 +124,7 @@ def mask_phone_number(phone, visible_start=4, visible_end=4):
     masked_part = '*' * mask_length
     return prefix + start_part + masked_part + end_part
 
-def extract_otp_from_text(text):
-    """Fungsi ekstraksi OTP yang fleksibel (pola 668-098)"""
-    if not text: return None
-    patterns = [ 
-        r'<#>\s*([\d\s-]+)\s*—',  
-        r'code[:\s]*([\d\s-]+)',  
-        r'verification[:\s]*([\d\s-]+)', 
-        r'otp[:\s]*([\d\s-]+)',   
-        r'pin[:\s]*([\d\s-]+)',   
-        r'\b(\d{3}[- ]?\d{3})\b', 
-        r'\b(\d{6})\b', 
-        r'\b(\d{5})\b', 
-        r'\b(\d{4})\b', 
-    ]
-    for p in patterns:
-        m = re.search(p, text, re.I)
-        if m:
-            matched_otp_raw = m.group(1) if len(m.groups()) >= 1 else m.group(0)
-            matched_otp = re.sub(r'[^\d]', '', matched_otp_raw)
-            if len(matched_otp) == 4 and 2000 <= int(matched_otp) <= 2099: continue 
-            if matched_otp: return matched_otp
-            
-    return None
-
 def clean_service_name(service):
-    """Fungsi untuk membersihkan dan menstandarisasi nama layanan."""
     if not service: return "Unknown"
     
     maps = {
@@ -166,61 +141,87 @@ def clean_service_name(service):
             
     return service.strip().title()
 
-def create_inline_keyboard():
-    """Membuat payload keyboard inline untuk Telegram API."""
-    keyboard = {
-        "inline_keyboard": [
-            [
-                {"text": "➡️ GetNumber", "url": "https://t.me/myzuraisgoodbot"},
-                {"text": "👤 Admin", "url": "https://t.me/Imr1d"}
-            ]
+def create_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton("📞GetNumber", url="https://t.me/myzuraisgoodbot?start=ZuraBot"),
+            InlineKeyboardButton("👤Admin", url="https://t.me/Imr1d")
         ]
-    }
-    return json.dumps(keyboard)
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
-def format_otp_message(otp_data: Dict[str, Any]) -> str:
-    """Memformat data OTP menjadi pesan Telegram (seperti skrip pertama)."""
-    otp = otp_data.get('otp', 'N/A')
-    phone = otp_data.get('phone', 'N/A')
-    masked_phone = mask_phone_number(phone, visible_start=4, visible_end=4)
-    service = otp_data.get('service', 'Unknown')
-    range_text = otp_data.get('range', 'N/A')
-    full_message = otp_data.get('raw_message', 'N/A')
+def format_live_message(range_val, count, country_name, service, full_message):
+    country_emoji = get_country_emoji(country_name)
+    masked_range = mask_phone_number(range_val, visible_start=4, visible_end=4)
+    range_with_count = f"<code>{masked_range}</code> ({count}x)" if count > 1 else f"<code>{masked_range}</code>"
+    full_message_escaped = full_message.replace('<', '&lt;').replace('>', '&gt;')
     
-    emoji = get_country_emoji(range_text)
-    full_message_escaped = full_message.replace('<', '&lt;').replace('>', '&gt;') 
+    message = (
+        "🔥Live message new range\n"
+        f"📱Range: {range_with_count}\n"
+        f"{country_emoji}Country: {country_name}\n"
+        f"⚙️ Service: {service}\n"
+        "🗯️Message Available :\n"
+        f"<blockquote>{full_message_escaped}</blockquote>"
+    )
+    return message
+
+
+async def cleanup_old_messages(app):
+    global SENT_MESSAGES
+    ten_minutes_ago = datetime.now() - timedelta(minutes=10)
     
-    # Menggunakan tag <b> dan <code> sesuai skrip pertama
-    return f"""🔐 <b>New OTP Received</b>
+    ranges_to_remove = []
+    for range_val, data in SENT_MESSAGES.items():
+        if data['timestamp'] < ten_minutes_ago:
+            ranges_to_remove.append(range_val)
+            print(f"🧹 Range {range_val} (Count: {data['count']}) sudah lebih dari 10 menit, menghapus dari pelacakan.")
+            
+    for range_val in ranges_to_remove:
+        del SENT_MESSAGES[range_val]
 
-🌍 Country: <b>{range_text} {emoji}</b>
-
-📱 Number: <code>{masked_phone}</code>
-🌐 Service: <b>{service}</b>
-🔢 OTP: <code>{otp}</code>
-
-FULL MESSAGES:
-<blockquote>{full_message_escaped}</blockquote>"""
-
-def send_tg(text, with_inline_keyboard=False, target_chat_id=None):
-    """Fungsi sederhana untuk mengirim pesan Telegram."""
-    chat_id_to_use = target_chat_id if target_chat_id is not None else CHAT_ID
-    if not BOT_TOKEN or not chat_id_to_use:
-        print("❌ Telegram config missing. Cannot send message.")
-        return
-    payload = {'chat_id': chat_id_to_use, 'text': text, 'parse_mode': 'HTML'}
-    if with_inline_keyboard:
-        payload['reply_markup'] = create_inline_keyboard()
+async def send_or_edit_telegram_message(app, range_val, country, service, message_text):
+    global SENT_MESSAGES
+    reply_markup = create_keyboard()
     try:
-        requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data=payload,
-            timeout=15  
-        )
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Telegram Connection Error: {e}")
+        if range_val in SENT_MESSAGES:
+            message_id = SENT_MESSAGES[range_val]['message_id']
+            await app.bot.edit_message_text(
+                chat_id=CHAT_ID,
+                message_id=message_id,
+                text=message_text,
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+        else:
+            sent_message = await app.bot.send_message(
+                chat_id=CHAT_ID,
+                text=message_text,
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+            SENT_MESSAGES[range_val] = {
+                'message_id': sent_message.message_id,
+                'count': 1,
+                'timestamp': datetime.now()
+            }
+    except Exception as e:
+        if 'Message is not modified' not in str(e):
+             print(f"❌ Gagal mengirim/mengedit pesan Telegram: {e}")
 
-# ==================== PLAYWRIGHT/SCRAPER CLASS (Mirip skrip pertama) ====================
+async def send_startup_message(app):
+    if not BOT_TOKEN or not CHAT_ID: return
+    try:
+        await app.bot.send_message(
+            chat_id=CHAT_ID,
+            text="✅Ready to check the latest range (Playwright CONSOLE Monitor)",
+            parse_mode='HTML'
+        )
+        print("✅ Pesan startup terkirim.")
+    except Exception as e:
+        print(f"❌ Gagal mengirim pesan startup: {e}")
+
+# ==================== PLAYWRIGHT/SCRAPER CLASS (REVISI KONSEL) ====================
 
 class SMSMonitor:
     
@@ -229,11 +230,11 @@ class SMSMonitor:
         self.browser = None
         self.page = None
         self.is_logged_in = False 
-        self._temp_username = None 
-        self._temp_password = None 
+        # Selector khusus untuk blok konsol live
+        self.CONSOLE_SELECTOR = ".group.flex.flex-col.sm\\:flex-row.sm\\:items-start.gap-3.p-3.rounded-lg"
+
 
     async def initialize(self, p_instance):
-        """Menghubungkan ke browser melalui CDP."""
         try:
             self.browser = await p_instance.chromium.connect_over_cdp(CHROME_DEBUG_URL)
             context = self.browser.contexts[0]
@@ -244,7 +245,6 @@ class SMSMonitor:
             raise
 
     async def check_url_login_status(self) -> bool:
-        """Memeriksa status login berdasarkan URL."""
         if not self.page: return False
         try:
             current_url = self.page.url
@@ -255,182 +255,180 @@ class SMSMonitor:
             return False
 
     async def fetch_sms(self) -> List[Dict[str, Any]]:
-        """Mengambil dan memparsing data SMS dari dashboard."""
-        if not self.page or not self.is_logged_in: 
-            print("⚠️ ERROR: Page not initialized or not logged in during fetch_sms.")
-            return []
+        """Mengambil dan memparsing data SMS dari konsol live (/console)."""
+        if not self.page or not self.is_logged_in: return []
             
         if self.page.url != self.url:
             try:
-                await self.page.goto(self.url, wait_until='domcontentloaded', timeout=15000)
+                # Navigasi ke URL konsol
+                await self.page.goto(self.url, wait_until='networkidle', timeout=15000)
             except Exception as e:
-                print(f"❌ Error navigating to dashboard: {e}")
+                print(f"❌ Error navigating to console dashboard: {e}")
                 return []
                 
         try:
-            # Tunggu selector utama tabel data OTP
-            await self.page.wait_for_selector('tbody.text-sm.divide-y.divide-white\\/5', timeout=10000)
-        except PlaywrightTimeoutError:
-             print("❌ Error: Timeout saat menunggu tabel data SMS. Mungkin halaman belum selesai dimuat atau perlu login ulang.")
-             return []
-        except Exception as e:
-             print(f"❌ Error: Gagal menemukan tabel data SMS: {e}")
+            # Tunggu selector blok konsol
+            await self.page.wait_for_selector(self.CONSOLE_SELECTOR, timeout=10000)
+        except PlaywrightTimeoutError: 
+             print("❌ Timeout saat menunggu blok data konsol.")
              return []
 
-
-        html = await self.page.content()
-        soup = BeautifulSoup(html, "html.parser")
         messages = []
-
-        tbody = soup.find("tbody", class_="text-sm divide-y divide-white/5")
-        if not tbody: return []
-            
-        rows = tbody.find_all("tr")
+        
+        # Menggunakan Playwright API untuk mendapatkan semua blok data
+        elements = await self.page.locator(self.CONSOLE_SELECTOR).all()
 
         SERVICE_KEYWORDS = r'(facebook|whatsapp|instagram|telegram|google|twitter|linkedin|tiktok)'
 
-        for r in rows:
-            tds = r.find_all("td")
-            if len(tds) < 3: continue
-            
-            # Kolom 1 (Status, Phone, Message)
-            col1 = tds[0]
-            status_span = col1.find("span", class_=lambda x: x and "text-[10px] uppercase" in x)
-            status = status_span.get_text(strip=True) if status_span else "N/A"
-            
-            if status.lower() != 'success': continue # Hanya ambil yang sukses
-            
-            # A. Phone Number
-            phone_span = col1.find("span", class_=lambda x: x and "font-mono text-white font-bold text-lg" in x)
-            phone_number_raw = phone_span.get_text(strip=True) if phone_span else "N/A"
-            phone = clean_phone_number(phone_number_raw)
-            
-            # B. Raw Message (FULL)
-            message_div = col1.find("div", class_=lambda x: x and "bg-slate-800 border" in x)
-            raw_message_full = message_div.get_text(strip=True, separator=' ') if message_div else ""
-            
-            # C. OTP
-            otp = extract_otp_from_text(raw_message_full)
-                    
-            # D. Range/Country (Kolom kedua)
-            range_span = tds[1].find("span", class_="text-slate-200 font-medium")
-            range_text = range_span.get_text(strip=True) if range_span else "N/A"
-            
-            # E. Service
-            service_match = re.search(SERVICE_KEYWORDS, raw_message_full, re.IGNORECASE)
-            
-            if service_match:
-                service = clean_service_name(service_match.group(1))
-            else:
-                # Logika fallback layanan
-                service_hint = raw_message_full.split('—', 1)[1].strip() if '—' in raw_message_full else raw_message_full
-                words = service_hint.split()
-                service_raw = words[0] if words else service_hint
-                service = clean_service_name(service_raw)
-            
-            # --- Simpan Hasil ---
-            if otp and phone != 'N/A':
-                messages.append({
-                    "otp": otp,
-                    "phone": phone,
-                    "service": service,
-                    "range": range_text,
-                    "timestamp": datetime.now().strftime("%H:%M:%S"),
-                    "raw_message": raw_message_full 
-                })
+        for element in elements:
+            try:
+                # 1. Service
+                service_element = element.locator(".flex-grow.min-w-0 .text-xs.font-bold.text-blue-400")
+                service_text = await service_element.inner_text() if await service_element.count() > 0 else "N/A"
+                service = clean_service_name(service_text)
+                
+                # Hanya fokus pada WhatsApp dan Facebook (sesuai Pyppeteer sebelumnya, bisa dihapus)
+                if service.strip().upper() not in ["WHATSAPP", "FACEBOOK"]:
+                    # Lanjutkan ke log berikutnya jika bukan layanan yang diinginkan
+                    # HAPUS baris IF ini jika Anda ingin semua layanan
+                    pass 
+
+                # 2. Range/Phone
+                phone_element = element.locator(".flex-grow.min-w-0 .text-\\[10px\\].text-slate-500.font-mono")
+                phone_raw = await phone_element.inner_text() if await phone_element.count() > 0 else "N/A"
+                phone = clean_phone_number(phone_raw) # Ini adalah range_key
+                
+                # 3. Country
+                country_element = element.locator(".flex-shrink-0 .text-\\[10px\\].text-slate-600.mt-1.font-mono")
+                country_full = await country_element.inner_text() if await country_element.count() > 0 else ""
+                # Ekstraksi nama negara dari teks (e.g., "ID • INDONESIA")
+                country_match = re.search(r'•\s*(.*)$', country_full.strip())
+                country_name = country_match.group(1).strip() if country_match else "Unknown"
+                
+                # 4. Message (FULL)
+                message_element = element.locator(".flex-grow.min-w-0 p")
+                message_text = await message_element.inner_text() if await message_element.count() > 0 else ""
+                full_message = message_text.replace('➜', '').strip()
+
+                # --- Simpan Hasil ---
+                if phone != 'N/A' and full_message:
+                    messages.append({
+                        "range_key": phone, 
+                        "country": country_name,
+                        "service": service,
+                        "raw_message": full_message 
+                    })
+            except Exception as e:
+                # Error saat memproses satu blok log, lewati
+                print(f"⚠️ Error memproses satu blok konsol: {e}")
+                continue
+                
         return messages
 
 monitor = SMSMonitor()
 
-# ==================== MAIN LOOP ====================
+# ==================== MAIN LOOP DENGAN LOGIKA LIVE CONSOLE (SAMA) ====================
 
-async def monitor_sms_loop():
-    global GLOBAL_ASYNC_LOOP
-    global LAST_ID
+async def monitor_sms_loop(app):
+    global SENT_MESSAGES
     
-    # Inisialisasi Telegram API (tanpa ApplicationBuilder karena hanya untuk send_tg sederhana)
-    send_tg("🚀 Bot Playwright/BeautifulSoup aktif. Mencoba koneksi ke Chrome CDP...", target_chat_id=ADMIN_ID)
-
+    # 1. Inisialisasi Koneksi Playwright
     async with async_playwright() as p:
         try:
-            # 1. Inisialisasi Koneksi
             await monitor.initialize(p)
         except Exception:
-            send_tg("🚨 <b>FATAL ERROR</b>: Gagal terhubung ke Chrome/Playwright. Cek log.", target_chat_id=ADMIN_ID)
+            await app.bot.send_message(chat_id=ADMIN_ID, text="🚨 <b>FATAL ERROR</b>: Gagal terhubung ke Chrome/Playwright. Cek log.", parse_mode='HTML')
             return 
-    
+        
         # 2. Loop Utama
         while True:
             try:
-                # Periksa status login
                 await monitor.check_url_login_status() 
 
                 if monitor.is_logged_in:
                     
-                    # A. Ambil data SMS
+                    # A. Ambil data SMS (Sekarang dari /console)
                     msgs = await monitor.fetch_sms()
                     
-                    # B. Filter pesan baru (cegah duplikasi)
-                    new_otps = otp_filter.filter(msgs)
+                    # B. Filter pesan baru
+                    new_unique_logs = message_filter.filter(msgs) 
 
-                    if new_otps:
-                        print(f"✅ Ditemukan {len(new_otps)} OTP baru. Mengirim ke Telegram...")
+                    if new_unique_logs:
+                        print(f"✅ Ditemukan {len(new_unique_logs)} log unik baru. Memproses Live Counter...")
                         
-                        for i, otp_data in enumerate(new_otps):
-                            # Kirim ke Telegram (menggunakan format skrip pertama)
-                            message_text = format_otp_message(otp_data)
-                            send_tg(message_text, with_inline_keyboard=True, target_chat_id=CHAT_ID)
-                            print(f"   -> Terkirim OTP {i+1}/{len(new_otps)}: {otp_data['otp']} for {otp_data['phone']}")
+                        # C. Proses Live Counter dan Kirim/Edit Pesan
+                        for log in new_unique_logs:
+                            range_val = log['range_key']
                             
-                            await asyncio.sleep(2) # Jeda pengiriman
+                            if range_val in SENT_MESSAGES:
+                                old_data = SENT_MESSAGES[range_val]
+                                new_count = old_data['count'] + 1
+                                SENT_MESSAGES[range_val]['count'] = new_count
+                                SENT_MESSAGES[range_val]['timestamp'] = datetime.now()
+                                
+                                message_text = format_live_message(
+                                    range_val, new_count, log['country'], log['service'], log['raw_message']
+                                )
+                                await send_or_edit_telegram_message(app, range_val, log['country'], log['service'], message_text)
+
+                            else:
+                                message_text = format_live_message(
+                                    range_val, 1, log['country'], log['service'], log['raw_message']
+                                )
+                                await send_or_edit_telegram_message(app, range_val, log['country'], log['service'], message_text)
+                            
+                            await asyncio.sleep(0.5) 
+
+                    # D. Bersihkan pesan lama
+                    await cleanup_old_messages(app)
                     
-                    # C. Refresh halaman (soft refresh/reload)
+                    # E. Refresh halaman
                     if monitor.page:
-                         await monitor.page.reload(wait_until='networkidle')
-                         print("🔄 Halaman Dashboard di-refresh.")
+                         # Pada halaman konsol, reload mungkin kurang efektif
+                         # Disarankan menggunakan page.goto ulang ke URL yang sama
+                         await monitor.page.goto(DASHBOARD_URL, wait_until='networkidle', timeout=10000)
+                         print("🔄 Halaman Konsol di-reload (refresh).")
 
                 else:
-                    # Jika belum login, coba navigasi ke URL dashboard, tetapi bot ini tidak ada
-                    # fungsi login otomatis, asumsikan user sudah login di CDP yang berjalan.
-                    # Jika tidak, pesan peringatan akan muncul di console.
                     print("⚠️ TIDAK LOGIN. Pastikan Anda sudah login manual di browser Chrome yang terhubung ke CDP.")
                     try:
-                        # Coba navigasi ulang, mungkin sesi sudah ada
                         await monitor.page.goto(DASHBOARD_URL, wait_until='domcontentloaded', timeout=5000)
                     except Exception:
                          pass
 
             except Exception as e:
-                print(f"❌ Error saat fetch/send: {e.__class__.__name__}: {e}")
+                print(f"❌ Error saat fetch/send di loop utama: {e.__class__.__name__}: {e}")
 
             # Waktu tunggu antara cek
-            await asyncio.sleep(10) # 10 detik
+            await asyncio.sleep(10)
 
-# ==================== START EXECUTION ====================
+# ==================== START EXECUTION (SAMA) ====================
+
+async def main():
+    if not BOT_TOKEN or not CHAT_ID:
+        print("❌ BOT_TOKEN atau CHAT_ID tidak ditemukan di bagian KONFIGURASI. Pastikan sudah benar.")
+        return
+
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    print("🤖 Telegram Bot terhubung.")
+    
+    await send_startup_message(app)
+    
+    await monitor_sms_loop(app)
 
 if __name__ == "__main__":
-    if not BOT_TOKEN or not CHAT_ID:
-        print("FATAL ERROR: Pastikan BOT_TOKEN dan CHAT_ID ada di bagian KONFIGURASI.")
-    else:
-        print("Starting SMS Monitor Bot (Playwright/BeautifulSoup) with revised logic...")
-        
-        print("\n=======================================================")
-        print("     ⚠️  PENTING: JALANKAN CHROME/EDGE TERPISAH   ⚠️")
-        print("     Gunakan perintah ini di terminal terpisah:")
-        print('     chrome.exe --remote-debugging-port=9222 --user-data-dir="C:\\temp\\playwright_profile"')
-        print("=======================================================\n")
+    
+    print("Starting SMS Monitor Bot (Playwright CONSOLE Scraper - OTP Free)...")
+    
+    print("\n=======================================================")
+    print("     ⚠️  PENTING: JALANKAN CHROME/EDGE TERPISAH   ⚠️")
+    print("     Gunakan perintah ini di terminal terpisah:")
+    print('     chrome.exe --remote-debugging-port=9222 --user-data-dir="C:\\temp\\playwright_profile"')
+    print("=======================================================\n")
 
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        GLOBAL_ASYNC_LOOP = loop 
-        
-        try:
-            loop.run_until_complete(monitor_sms_loop())
-        except KeyboardInterrupt:
-            print("\nBot shutting down...")
-        finally:
-            print("Bot core shutdown complete.")
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nBot shutting down...")
+    except Exception as e:
+        print(f"Error fatal: {e}")
