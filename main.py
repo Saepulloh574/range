@@ -32,7 +32,17 @@ class MessageFilter:
     CLEANUP_KEY = '__LAST_CLEANUP_GMT__' 
     def __init__(self, file='range_cache_mnit.json'): 
         self.file = file
-        self.cache = self._load()
+        
+        # +++++ KOREKSI DI SINI: HAPUS CACHE SAAT STARTUP +++++
+        if os.path.exists(self.file):
+            try:
+                os.remove(self.file)
+                print(f"🗑️ Cache lama '{self.file}' berhasil dihapus saat startup.")
+            except Exception as e:
+                print(f"❌ Gagal menghapus cache saat startup: {e}")
+        # +++++++++++++++++++++++++++++++++++++++++++++++++++++
+        
+        self.cache = self._load() 
         self.last_cleanup_date_gmt = self.cache.pop(self.CLEANUP_KEY, '19700101') 
         self._cleanup() 
         
@@ -59,12 +69,12 @@ class MessageFilter:
             self.last_cleanup_date_gmt = now_gmt
             self._save()
         else:
+            # Karena cache sudah dihapus di awal, ini hanya memastikan file kosong ditulis
             self._save()
         
     def key(self, d: Dict[str, Any]) -> str: 
         phone = d.get('range_key')
         raw_message = d.get('raw_message')
-        # Kunci adalah Nomor Penuh (Range XXX) + Hash dari Isi Pesan
         return f"{phone}_{hash(raw_message)}" 
         
     def is_dup(self, d: Dict[str, Any]) -> bool:
@@ -92,22 +102,227 @@ message_filter = MessageFilter()
 # --- Utility Functions ---
 
 COUNTRY_EMOJI = {
-    "NEPAL": "🇳🇵", "IVORY COAST": "🇨🇮", "GUINEA": "🇬🇳", "CENTRAL AFRIKA": "🇨🇫", 
-    "TOGO": "🇹🇬", "TAJIKISTAN": "🇹🇯", "BENIN": "🇧🇯", "SIERRA LEONE": "🇸🇱", 
-    "MADAGASCAR": "🇲🇬", "AFGANISTAN": "🇦🇫", "INDONESIA": "🇮🇩", "UNITED STATES": "🇺🇸",
-    "ANGOLA": "🇦🇴", "CAMEROON": "🇨🇲", "MOZAMBIQUE": "🇲🇿", "PERU": "🇵🇪", "VIETNAM": "🇻🇳"
+    # === BAWAAN (WAJIB, JANGAN DIUBAH) ===
+    "NEPAL": "🇳🇵",
+    "IVORY COAST": "🇨🇮",
+    "GUINEA": "🇬🇳",
+    "CENTRAL AFRIKA": "🇨🇫",
+    "TOGO": "🇹🇬",
+    "TAJIKISTAN": "🇹🇯",
+    "BENIN": "🇧🇯",
+    "SIERRA LEONE": "🇸🇱",
+    "MADAGASCAR": "🇲🇬",
+    "AFGANISTAN": "🇦🇫",
+    "INDONESIA": "🇮🇩",
+    "UNITED STATES": "🇺🇸",
+    "ANGOLA": "🇦🇴",
+    "CAMEROON": "🇨🇲",
+    "MOZAMBIQUE": "🇲🇿",
+    "PERU": "🇵🇪",
+    "VIETNAM": "🇻🇳",
+
+    # === TAMBAHAN NEGARA LAIN ===
+    "AFGHANISTAN": "🇦🇫",
+    "ALBANIA": "🇦🇱",
+    "ALGERIA": "🇩🇿",
+    "ANDORRA": "🇦🇩",
+    "ANTIGUA AND BARBUDA": "🇦🇬",
+    "ARGENTINA": "🇦🇷",
+    "ARMENIA": "🇦🇲",
+    "AUSTRALIA": "🇦🇺",
+    "AUSTRIA": "🇦🇹",
+    "AZERBAIJAN": "🇦🇿",
+
+    "BAHAMAS": "🇧🇸",
+    "BAHRAIN": "🇧🇭",
+    "BANGLADESH": "🇧🇩",
+    "BARBADOS": "🇧🇧",
+    "BELARUS": "🇧🇾",
+    "BELGIUM": "🇧🇪",
+    "BELIZE": "🇧🇿",
+    "BHUTAN": "🇧🇹",
+    "BOLIVIA": "🇧🇴",
+    "BOSNIA AND HERZEGOVINA": "🇧🇦",
+    "BOTSWANA": "🇧🇼",
+    "BRAZIL": "🇧🇷",
+    "BRUNEI": "🇧🇳",
+    "BULGARIA": "🇧🇬",
+    "BURKINA FASO": "🇧🇫",
+    "BURUNDI": "🇧🇮",
+
+    "CAMBODIA": "🇰🇭",
+    "CANADA": "🇨🇦",
+    "CAPE VERDE": "🇨🇻",
+    "CENTRAL AFRICAN REPUBLIC": "🇨🇫",
+    "CHAD": "🇹🇩",
+    "CHILE": "🇨🇱",
+    "CHINA": "🇨🇳",
+    "COLOMBIA": "🇨🇴",
+    "COMOROS": "🇰🇲",
+    "CONGO": "🇨🇬",
+    "COSTA RICA": "🇨🇷",
+    "CROATIA": "🇭🇷",
+    "CUBA": "🇨🇺",
+    "CYPRUS": "🇨🇾",
+    "CZECH REPUBLIC": "🇨🇿",
+
+    "DENMARK": "🇩🇰",
+    "DJIBOUTI": "🇩🇯",
+    "DOMINICA": "🇩🇲",
+    "DOMINICAN REPUBLIC": "🇩🇴",
+
+    "ECUADOR": "🇪🇨",
+    "EGYPT": "🇪🇬",
+    "EL SALVADOR": "🇸🇻",
+    "EQUATORIAL GUINEA": "🇬🇶",
+    "ERITREA": "🇪🇷",
+    "ESTONIA": "🇪🇪",
+    "ESWATINI": "🇸🇿",
+    "ETHIOPIA": "🇪🇹",
+
+    "FIJI": "🇫🇯",
+    "FINLAND": "🇫🇮",
+    "FRANCE": "🇫🇷",
+
+    "GABON": "🇬🇦",
+    "GAMBIA": "🇬🇲",
+    "GEORGIA": "🇬🇪",
+    "GERMANY": "🇩🇪",
+    "GHANA": "🇬🇭",
+    "GREECE": "🇬🇷",
+    "GRENADA": "🇬🇩",
+    "GUATEMALA": "🇬🇹",
+    "GUINEA-BISSAU": "🇬🇼",
+    "GUYANA": "🇬🇾",
+
+    "HAITI": "🇭🇹",
+    "HONDURAS": "🇭🇳",
+    "HUNGARY": "🇭🇺",
+
+    "ICELAND": "🇮🇸",
+    "INDIA": "🇮🇳",
+    "IRAN": "🇮🇷",
+    "IRAQ": "🇮🇶",
+    "IRELAND": "🇮🇪",
+    "ISRAEL": "🇮🇱",
+    "ITALY": "🇮🇹",
+
+    "JAMAICA": "🇯🇲",
+    "JAPAN": "🇯🇵",
+    "JORDAN": "🇯🇴",
+
+    "KAZAKHSTAN": "🇰🇿",
+    "KENYA": "🇰🇪",
+    "KIRIBATI": "🇰🇮",
+    "KUWAIT": "🇰🇼",
+    "KYRGYZSTAN": "🇰🇬",
+
+    "LAOS": "🇱🇦",
+    "LATVIA": "🇱🇻",
+    "LEBANON": "🇱🇧",
+    "LESOTHO": "🇱🇸",
+    "LIBERIA": "🇱🇷",
+    "LIBYA": "🇱🇾",
+    "LIECHTENSTEIN": "🇱🇮",
+    "LITHUANIA": "🇱🇹",
+    "LUXEMBOURG": "🇱🇺",
+
+    "MALAWI": "🇲🇼",
+    "MALAYSIA": "🇲🇾",
+    "MALDIVES": "🇲🇻",
+    "MALI": "🇲🇱",
+    "MALTA": "🇲🇹",
+    "MARSHALL ISLANDS": "🇲🇭",
+    "MAURITANIA": "🇲🇷",
+    "MAURITIUS": "🇲🇺",
+    "MEXICO": "🇲🇽",
+    "MICRONESIA": "🇫🇲",
+    "MOLDOVA": "🇲🇩",
+    "MONACO": "🇲🇨",
+    "MONGOLIA": "🇲🇳",
+    "MONTENEGRO": "🇲🇪",
+    "MOROCCO": "🇲🇦",
+    "MYANMAR": "🇲🇲",
+
+    "NAMIBIA": "🇳🇦",
+    "NAURU": "🇳🇷",
+    "NETHERLANDS": "🇳🇱",
+    "NEW ZEALAND": "🇳🇿",
+    "NICARAGUA": "🇳🇮",
+    "NIGER": "🇳🇪",
+    "NIGERIA": "🇳🇬",
+    "NORTH KOREA": "🇰🇵",
+    "NORTH MACEDONIA": "🇲🇰",
+    "NORWAY": "🇳🇴",
+
+    "OMAN": "🇴🇲",
+
+    "PAKISTAN": "🇵🇰",
+    "PALAU": "🇵🇼",
+    "PANAMA": "🇵🇦",
+    "PAPUA NEW GUINEA": "🇵🇬",
+    "PARAGUAY": "🇵🇾",
+    "PHILIPPINES": "🇵🇭",
+    "POLAND": "🇵🇱",
+    "PORTUGAL": "🇵🇹",
+    "QATAR": "🇶🇦",
+
+    "ROMANIA": "🇷🇴",
+    "RUSSIA": "🇷🇺",
+    "RWANDA": "🇷🇼",
+
+    "SAUDI ARABIA": "🇸🇦",
+    "SENEGAL": "🇸🇳",
+    "SERBIA": "🇷🇸",
+    "SEYCHELLES": "🇸🇨",
+    "SINGAPORE": "🇸🇬",
+    "SLOVAKIA": "🇸🇰",
+    "SLOVENIA": "🇸🇮",
+    "SOLOMON ISLANDS": "🇸🇧",
+    "SOMALIA": "🇸🇴",
+    "SOUTH AFRICA": "🇿🇦",
+    "SOUTH KOREA": "🇰🇷",
+    "SOUTH SUDAN": "🇸🇸",
+    "SPAIN": "🇪🇸",
+    "SRI LANKA": "🇱🇰",
+    "SUDAN": "🇸🇩",
+    "SURINAME": "🇸🇷",
+    "SWEDEN": "🇸🇪",
+    "SWITZERLAND": "🇨🇭",
+    "SYRIA": "🇸🇾",
+
+    "TAIWAN": "🇹🇼",
+    "TANZANIA": "🇹🇿",
+    "THAILAND": "🇹🇭",
+    "TONGA": "🇹🇴",
+    "TRINIDAD AND TOBAGO": "🇹🇹",
+    "TUNISIA": "🇹🇳",
+    "TURKEY": "🇹🇷",
+    "TURKMENISTAN": "🇹🇲",
+    "TUVALU": "🇹🇻",
+
+    "UGANDA": "🇺🇬",
+    "UKRAINE": "🇺🇦",
+    "UNITED ARAB EMIRATES": "🇦🇪",
+    "UNITED KINGDOM": "🇬🇧",
+    "URUGUAY": "🇺🇾",
+    "UZBEKISTAN": "🇺🇿",
+
+    "VANUATU": "🇻🇺",
+    "VATICAN CITY": "🇻🇦",
+    "VENEZUELA": "🇻🇪",
+
+    "YEMEN": "🇾🇪",
+    "ZAMBIA": "🇿🇲",
+    "ZIMBABWE": "🇿🇼",
 }
-def get_country_emoji(country_name: str) -> str:
-    return COUNTRY_EMOJI.get(country_name.strip().upper(), "❓")
 
 def clean_phone_number(phone):
-    # Membersihkan karakter non-digit kecuali X dan +
     if not phone: return "N/A"
     cleaned = re.sub(r'[^\d+X]', '', phone) 
     return cleaned or phone
 
 def format_phone_number(phone):
-    """Menggunakan range_key yang sudah dimasking XXX, jadi kita hanya mengembalikannya."""
     if not phone or phone == "N/A": return phone
     return phone
 
@@ -129,13 +344,11 @@ def clean_service_name(service):
     return service.strip().title()
 
 def create_keyboard():
-    # +++++ PERUBAHAN DI SINI: MENGHAPUS TOMBOL ADMIN +++++
     keyboard = [
         [
             InlineKeyboardButton("📞GetNumber", url="https://t.me/myzuraisgoodbot?start=ZuraBot"),
         ]
     ]
-    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++
     return InlineKeyboardMarkup(keyboard)
 
 def format_live_message(range_val, count, country_name, service, full_message):
@@ -178,7 +391,7 @@ async def cleanup_old_messages(app):
 # FUNGSI BARU: DELETE PESAN LAMA DAN KIRIM ULANG PESAN BARU
 async def delete_and_send_telegram_message(app, range_val, country, service, message_text):
     global SENT_MESSAGES
-    reply_markup = create_keyboard() # Akan memanggil create_keyboard() yang sudah diperbarui
+    reply_markup = create_keyboard() 
     
     try:
         if range_val in SENT_MESSAGES:
@@ -358,7 +571,6 @@ async def monitor_sms_loop(app):
                         # C. Proses Live Counter: Kelompokkan berdasarkan Range Key (Nomor Penuh XXX)
                         grouped_logs = {}
                         for log in new_unique_logs:
-                            # Log terbaru untuk range yang sama akan menimpa yang lama dalam fetch ini
                             grouped_logs[log['range_key']] = log 
                         
                         print(f"📦 Mengelompokkan ke {len(grouped_logs)} Range unik untuk diproses.")
