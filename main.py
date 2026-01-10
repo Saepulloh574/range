@@ -63,8 +63,10 @@ class MessageFilter:
         
     def key(self, d: Dict[str, Any]) -> str: 
         phone = d.get('range_key')
+        # +++++ KOREKSI: MENGEMBALIKAN FILTER KE NOMOR + ISI PESAN (untuk memungkinkan COUNTER) +++++
         raw_message = d.get('raw_message')
         return f"{phone}_{hash(raw_message)}"
+        # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     
     def is_dup(self, d: Dict[str, Any]) -> bool:
         self._cleanup() 
@@ -97,7 +99,7 @@ COUNTRY_EMOJI = {
     "ANGOLA": "🇦🇴", "CAMEROON": "🇨🇲", "MOZAMBIQUE": "🇲🇿", "PERU": "🇵🇪", "VIETNAM": "🇻🇳"
 }
 def get_country_emoji(country_name: str) -> str:
-    return COUNTRY_EMOJI.get(country_name.strip().upper(), "🏳️")
+    return COUNTRY_EMOJI.get(country_name.strip().upper(), "❓")
 
 def clean_phone_number(phone):
     if not phone: return "N/A"
@@ -179,7 +181,8 @@ def format_live_message(range_val, count, country_name, service, full_message):
 
 async def cleanup_old_messages(app):
     global SENT_MESSAGES
-    ten_minutes_ago = datetime.now() - timedelta(minutes=10)
+    # Tracking time untuk SENT_MESSAGES
+    ten_minutes_ago = datetime.now() - timedelta(minutes=10) 
     
     ranges_to_remove = []
     for range_val, data in SENT_MESSAGES.items():
@@ -188,6 +191,7 @@ async def cleanup_old_messages(app):
             print(f"🧹 Range {range_val} (Count: {data['count']}) sudah lebih dari 10 menit, menghapus dari pelacakan.")
             
     for range_val in ranges_to_remove:
+        # Jika range dihapus dari SENT_MESSAGES, berarti range tersebut dapat muncul lagi (count=1)
         del SENT_MESSAGES[range_val]
 
 
@@ -207,7 +211,6 @@ async def delete_and_send_telegram_message(app, range_val, country, service, mes
                 )
                 print(f"✅ Berhasil menghapus pesan lama ({message_id}) untuk Range: {range_val}")
             except Exception as delete_e:
-                # Mengabaikan error jika pesan sudah terhapus
                 if 'Message to delete not found' not in str(delete_e):
                     print(f"❌ Gagal menghapus pesan Telegram lama: {delete_e}")
                 
@@ -232,11 +235,9 @@ async def delete_and_send_telegram_message(app, range_val, country, service, mes
             )
             
             # Tambahkan ke tracking
-            # Catatan: Count=1 harus diatur di luar fungsi ini (di monitor_sms_loop)
-            # Namun, karena ini kasus range baru, count pasti 1. Kita inisialisasi di sini.
             SENT_MESSAGES[range_val] = {
                 'message_id': sent_message.message_id,
-                'count': 1, # Akan di-overwrite jika sudah diproses di loop
+                'count': 1, 
                 'timestamp': datetime.now()
             }
             
@@ -368,7 +369,7 @@ async def monitor_sms_loop(app):
                     # A. Ambil data SMS
                     msgs = await monitor.fetch_sms()
                     
-                    # B. Filter pesan baru (berdasarkan range+isi)
+                    # B. Filter pesan baru (Nomor + Isi Pesan)
                     new_unique_logs = message_filter.filter(msgs) 
 
                     if new_unique_logs:
@@ -378,6 +379,7 @@ async def monitor_sms_loop(app):
                         grouped_logs = {}
                         for log in new_unique_logs:
                             # Selalu timpa dengan log terbaru yang ditemukan untuk range ini
+                            # Logika ini memastikan hanya satu aksi (kirim/delete+send) per range per fetch
                             grouped_logs[log['range_key']] = log 
                         
                         print(f"📦 Mengelompokkan ke {len(grouped_logs)} Range unik untuk diproses.")
@@ -386,7 +388,7 @@ async def monitor_sms_loop(app):
                             
                             last_message = log['raw_message'] 
                             
-                            # Logika Peningkatan Counter
+                            # Logika Peningkatan Counter (berjalan jika range_val ada di SENT_MESSAGES)
                             if range_val in SENT_MESSAGES:
                                 old_data = SENT_MESSAGES[range_val]
                                 new_count = old_data['count'] + 1
@@ -394,20 +396,18 @@ async def monitor_sms_loop(app):
                                 SENT_MESSAGES[range_val]['timestamp'] = datetime.now()
                             else:
                                 new_count = 1
-                                # Catatan: SENT_MESSAGES diinisialisasi di dalam delete_and_send_telegram_message untuk range baru.
 
                             # Siapkan pesan
                             message_text = format_live_message(
                                 range_val, new_count, log['country'], log['service'], last_message
                             )
                             
-                            # Panggil fungsi BARU: DELETE & SEND
-                            # Fungsi ini akan menghapus yang lama dan mengirim yang baru (dan mengupdate SENT_MESSAGES)
+                            # Panggil fungsi DELETE & SEND
                             await delete_and_send_telegram_message(app, range_val, log['country'], log['service'], message_text)
                             
                             await asyncio.sleep(0.5) 
 
-                    # D. Bersihkan pesan lama (hapus dari tracking SENT_MESSAGES)
+                    # D. Bersihkan pesan lama (hapus dari tracking SENT_MESSAGES setelah 10 menit)
                     await cleanup_old_messages(app)
                     
                     # E. Refresh halaman
@@ -425,7 +425,7 @@ async def monitor_sms_loop(app):
             except Exception as e:
                 print(f"❌ Error saat fetch/send di loop utama: {e.__class__.__name__}: {e}")
 
-            # Waktu tunggu antara cek
+            # Waktu tunggu antara cek (10 detik)
             await asyncio.sleep(10)
 
 # ==================== START EXECUTION ====================
