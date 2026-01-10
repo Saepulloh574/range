@@ -13,7 +13,7 @@ import requests
 # ==================== KONFIGURASI DENGAN NILAI TETAP ====================
 
 # Konfigurasi Telegram
-BOT_TOKEN = "8558006836:AAGR3N4DwXYSlpOxjRvjZcPAmC1CUWRJexY"
+BOT_TOKEN = "8558006836:AAGR3N4DwXYSlpOxRvtjzckPAmC1CUWRJexY"
 CHAT_ID = "-1003358198353"
 ADMIN_ID = 7184123643 
 
@@ -73,6 +73,7 @@ class MessageFilter:
     def key(self, d: Dict[str, Any]) -> str: 
         phone = d.get('range_key')
         raw_message = d.get('raw_message')
+        # Gunakan hash yang lebih sederhana atau hilangkan jika raw_message selalu berbeda
         return f"{phone}_{hash(raw_message)}" 
         
     def is_dup(self, d: Dict[str, Any]) -> bool:
@@ -91,6 +92,7 @@ class MessageFilter:
         out = []
         for d in lst:
             if d.get('range_key') != 'N/A' and d.get('raw_message'):
+                # Cek duplikasi, lalu tambahkan ke cache jika unik
                 if not self.is_dup(d):
                     out.append(d)
                     self.add(d) 
@@ -103,13 +105,13 @@ COUNTRY_EMOJI = {
     "NEPAL": "🇳🇵", "IVORY COAST": "🇨🇮", "GUINEA": "🇬🇳", "CENTRAL AFRIKA": "🇨🇫", 
     "TOGO": "🇹🇬", "TAJIKISTAN": "🇹🇯", "BENIN": "🇧🇯", "SIERRA LEONE": "🇸🇱", 
     "MADAGASCAR": "🇲🇬", 
-    "AFGHANISTAN": "🇦🇫", # DITAMBAHKAN
-    "NETHERLANDS": "🇳🇱",  # DITAMBAHKAN
+    "AFGHANISTAN": "🇦🇫", 
+    "NETHERLANDS": "🇳🇱",  
     "INDONESIA": "🇮🇩", "UNITED STATES": "🇺🇸",
     "ANGOLA": "🇦🇴", "CAMEROON": "🇨🇲", "MOZAMBIQUE": "🇲🇿", "PERU": "🇵🇪", "VIETNAM": "🇻🇳"
 }
 def get_country_emoji(country_name: str) -> str:
-    # Mengubah fallback dari ❓ menjadi 🏳️
+    # Mengubah fallback dari ❓ menjadi 🇹🇾
     return COUNTRY_EMOJI.get(country_name.strip().upper(), "🇹🇾")
 
 def clean_phone_number(phone):
@@ -199,6 +201,7 @@ async def delete_and_send_telegram_message(app, range_val, country, service, mes
                 )
                 print(f"✅ Berhasil menghapus pesan lama ({message_id}) untuk Range: {range_val}")
             except Exception as delete_e:
+                # Ini sering terjadi jika pesan sudah terlalu lama atau bot tidak bisa menghapus
                 if 'Message to delete not found' not in str(delete_e):
                     print(f"❌ Gagal menghapus pesan Telegram lama: {delete_e}")
                 
@@ -254,13 +257,27 @@ class SMSMonitor:
         self.page = None
         self.is_logged_in = False 
         self.CONSOLE_SELECTOR = ".group.flex.flex-col.sm\\:flex-row.sm\\:items-start.gap-3.p-3.rounded-lg"
+        # Menentukan layanan yang diizinkan (case-insensitive)
+        self.ALLOWED_SERVICES = ['whatsapp', 'facebook']
 
 
     async def initialize(self, p_instance):
         try:
             self.browser = await p_instance.chromium.connect_over_cdp(CHROME_DEBUG_URL)
-            context = self.browser.contexts[0]
-            self.page = await context.new_page()
+            # Dapatkan semua konteks/halaman yang sudah ada
+            contexts = self.browser.contexts
+            if contexts:
+                context = contexts[0]
+                # Coba gunakan halaman yang sudah ada (halaman pertama)
+                if context.pages:
+                    self.page = context.pages[0]
+                else:
+                    self.page = await context.new_page()
+            else:
+                # Buat konteks baru jika tidak ada
+                context = await self.browser.new_context()
+                self.page = await context.new_page()
+
             print(f"✅ Playwright page connected successfully to CDP: {CHROME_DEBUG_URL}")
         except Exception as e:
             print(f"❌ FATAL ERROR: Gagal terhubung ke Chrome CDP. Pastikan Chrome berjalan. Error: {e}")
@@ -270,6 +287,7 @@ class SMSMonitor:
         if not self.page: return False
         try:
             current_url = self.page.url
+            # Cek apakah URL saat ini adalah dashboard
             self.is_logged_in = current_url.startswith("https://x.mnitnetwork.com/mdashboard")
             return self.is_logged_in
         except Exception:
@@ -278,16 +296,21 @@ class SMSMonitor:
 
     async def fetch_sms(self) -> List[Dict[str, Any]]:
         """Mengambil dan memparsing data SMS dari konsol live (/console)."""
-        if not self.page or not self.is_logged_in: return []
+        if not self.page or not self.is_logged_in: 
+            print("⚠️ Playwright/Browser belum terhubung atau tidak login.")
+            return []
             
+        # Pastikan halaman berada di URL dashboard/console yang benar
         if self.page.url != self.url:
             try:
+                print(f"Navigating to dashboard: {self.url}")
                 await self.page.goto(self.url, wait_until='networkidle', timeout=15000)
             except Exception as e:
                 print(f"❌ Error navigating to console dashboard: {e}")
                 return []
                 
         try:
+            # Tunggu selektor blok data muncul
             await self.page.wait_for_selector(self.CONSOLE_SELECTOR, timeout=10000)
         except PlaywrightTimeoutError: 
              print("❌ Timeout saat menunggu blok data konsol.")
@@ -298,15 +321,27 @@ class SMSMonitor:
 
         for element in elements:
             try:
-                # 1. Service
+                # 1. Service (Raw)
                 service_element = element.locator(".flex-grow.min-w-0 .text-xs.font-bold.text-blue-400")
-                service_text = await service_element.inner_text() if await service_element.count() > 0 else "N/A"
-                service = clean_service_name(service_text)
+                service_text_raw = await service_element.inner_text() if await service_element.count() > 0 else "N/A"
                 
-                # +++++ SERVICE FILTER DITERAPKAN DI SINI +++++
-                if service not in ['WhatsApp', 'Facebook']:
-                    continue # Lewati jika bukan WhatsApp atau Facebook
-                # +++++++++++++++++++++++++++++++++++++++++++++
+                # Cek Service Filter menggunakan raw text (Case-insensitive)
+                # Tambahkan pemeriksaan sebelum pembersihan nama, karena clean_service_name 
+                # mengubahnya menjadi Title/Standard name
+                
+                service_lower = service_text_raw.strip().lower()
+                
+                is_allowed = False
+                for allowed in self.ALLOWED_SERVICES:
+                     if allowed in service_lower:
+                         is_allowed = True
+                         break
+                
+                if not is_allowed:
+                    continue # Lewati jika bukan WhatsApp atau Facebook (atau mengandung kata itu)
+                
+                # Lanjutkan pembersihan nama service untuk ditampilkan
+                service = clean_service_name(service_text_raw)
                 
                 # 2. Range/Phone (Nomor Penuh XXX)
                 phone_element = element.locator(".flex-grow.min-w-0 .text-\\[10px\\].text-slate-500.font-mono")
@@ -328,7 +363,7 @@ class SMSMonitor:
                     messages.append({
                         "range_key": phone, 
                         "country": country_name,
-                        "service": service,
+                        "service": service, # Menggunakan nama yang sudah dibersihkan
                         "raw_message": full_message 
                     })
             except Exception as e:
@@ -355,11 +390,12 @@ async def monitor_sms_loop(app):
         # 2. Loop Utama
         while True:
             try:
+                # Periksa status login
                 await monitor.check_url_login_status() 
 
                 if monitor.is_logged_in:
                     
-                    # A. Ambil data SMS
+                    # A. Ambil data SMS (termasuk filter Service)
                     msgs = await monitor.fetch_sms()
                     
                     # B. Filter pesan baru (Nomor Penuh XXX + Isi Pesan)
@@ -369,6 +405,7 @@ async def monitor_sms_loop(app):
                         print(f"✅ Ditemukan {len(new_unique_logs)} log unik baru. Memproses Live Counter (Delete & Send)...")
                         
                         # C. Proses Live Counter: Kelompokkan berdasarkan Range Key (Nomor Penuh XXX)
+                        # Saat ini, grouped_logs hanya menyimpan entri log terakhir untuk setiap range_key yang unik
                         grouped_logs = {}
                         for log in new_unique_logs:
                             grouped_logs[log['range_key']] = log 
@@ -379,7 +416,7 @@ async def monitor_sms_loop(app):
                             
                             last_message = log['raw_message'] 
                             
-                            # Logika Peningkatan Counter (berjalan jika range_val ada di SENT_MESSAGES)
+                            # Logika Peningkatan Counter
                             if range_val in SENT_MESSAGES:
                                 old_data = SENT_MESSAGES[range_val]
                                 new_count = old_data['count'] + 1
@@ -401,14 +438,16 @@ async def monitor_sms_loop(app):
                     # D. Bersihkan pesan lama (hapus dari tracking SENT_MESSAGES setelah 10 menit)
                     await cleanup_old_messages(app)
                     
-                    # E. Refresh halaman
-                    if monitor.page:
-                         await monitor.page.goto(DASHBOARD_URL, wait_until='networkidle', timeout=10000)
-                         print("🔄 Halaman Konsol di-reload (refresh).")
+                    # E. Hapus bagian Refresh halaman otomatis (sesuai permintaan)
+                    # if monitor.page:
+                    #      await monitor.page.goto(DASHBOARD_URL, wait_until='networkidle', timeout=10000)
+                    #      print("🔄 Halaman Konsol di-reload (refresh).")
+
 
                 else:
                     print("⚠️ TIDAK LOGIN. Pastikan Anda sudah login manual di browser Chrome yang terhubung ke CDP.")
                     try:
+                        # Coba arahkan ke dashboard
                         await monitor.page.goto(DASHBOARD_URL, wait_until='domcontentloaded', timeout=5000)
                     except Exception:
                          pass
