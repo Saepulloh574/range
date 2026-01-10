@@ -33,14 +33,13 @@ class MessageFilter:
     def __init__(self, file='range_cache_mnit.json'): 
         self.file = file
         
-        # +++++ KOREKSI DI SINI: HAPUS CACHE SAAT STARTUP +++++
+        # HAPUS CACHE SAAT STARTUP
         if os.path.exists(self.file):
             try:
                 os.remove(self.file)
                 print(f"🗑️ Cache lama '{self.file}' berhasil dihapus saat startup.")
             except Exception as e:
                 print(f"❌ Gagal menghapus cache saat startup: {e}")
-        # +++++++++++++++++++++++++++++++++++++++++++++++++++++
         
         self.cache = self._load() 
         self.last_cleanup_date_gmt = self.cache.pop(self.CLEANUP_KEY, '19700101') 
@@ -69,7 +68,6 @@ class MessageFilter:
             self.last_cleanup_date_gmt = now_gmt
             self._save()
         else:
-            # Karena cache sudah dihapus di awal, ini hanya memastikan file kosong ditulis
             self._save()
         
     def key(self, d: Dict[str, Any]) -> str: 
@@ -104,11 +102,15 @@ message_filter = MessageFilter()
 COUNTRY_EMOJI = {
     "NEPAL": "🇳🇵", "IVORY COAST": "🇨🇮", "GUINEA": "🇬🇳", "CENTRAL AFRIKA": "🇨🇫", 
     "TOGO": "🇹🇬", "TAJIKISTAN": "🇹🇯", "BENIN": "🇧🇯", "SIERRA LEONE": "🇸🇱", 
-    "MADAGASCAR": "🇲🇬", "AFGANISTAN": "🇦🇫", "NETHERLANDS": "🇳🇱", "UNITED STATES": "🇺🇸",
+    "MADAGASCAR": "🇲🇬", 
+    "AFGHANISTAN": "🇦🇫", # DITAMBAHKAN
+    "NETHERLANDS": "🇳🇱",  # DITAMBAHKAN
+    "INDONESIA": "🇮🇩", "UNITED STATES": "🇺🇸",
     "ANGOLA": "🇦🇴", "CAMEROON": "🇨🇲", "MOZAMBIQUE": "🇲🇿", "PERU": "🇵🇪", "VIETNAM": "🇻🇳"
 }
 def get_country_emoji(country_name: str) -> str:
-    return COUNTRY_EMOJI.get(country_name.strip().upper(), "❓")
+    # Mengubah fallback dari ❓ menjadi 🏳️
+    return COUNTRY_EMOJI.get(country_name.strip().upper(), "🇹🇾")
 
 def clean_phone_number(phone):
     if not phone: return "N/A"
@@ -300,6 +302,11 @@ class SMSMonitor:
                 service_element = element.locator(".flex-grow.min-w-0 .text-xs.font-bold.text-blue-400")
                 service_text = await service_element.inner_text() if await service_element.count() > 0 else "N/A"
                 service = clean_service_name(service_text)
+                
+                # +++++ SERVICE FILTER DITERAPKAN DI SINI +++++
+                if service not in ['WhatsApp', 'Facebook']:
+                    continue # Lewati jika bukan WhatsApp atau Facebook
+                # +++++++++++++++++++++++++++++++++++++++++++++
                 
                 # 2. Range/Phone (Nomor Penuh XXX)
                 phone_element = element.locator(".flex-grow.min-w-0 .text-\\[10px\\].text-slate-500.font-mono")
