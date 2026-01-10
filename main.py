@@ -63,11 +63,10 @@ class MessageFilter:
         
     def key(self, d: Dict[str, Any]) -> str: 
         phone = d.get('range_key')
-        # +++++ KOREKSI: MENGEMBALIKAN FILTER KE NOMOR + ISI PESAN (untuk memungkinkan COUNTER) +++++
         raw_message = d.get('raw_message')
-        return f"{phone}_{hash(raw_message)}"
-        # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-    
+        # Kunci adalah Nomor Penuh (Range XXX) + Hash dari Isi Pesan
+        return f"{phone}_{hash(raw_message)}" 
+        
     def is_dup(self, d: Dict[str, Any]) -> bool:
         self._cleanup() 
         key = self.key(d)
@@ -102,33 +101,15 @@ def get_country_emoji(country_name: str) -> str:
     return COUNTRY_EMOJI.get(country_name.strip().upper(), "❓")
 
 def clean_phone_number(phone):
+    # Membersihkan karakter non-digit kecuali X dan +
     if not phone: return "N/A"
-    cleaned = re.sub(r'[^\d+]', '', phone)
+    cleaned = re.sub(r'[^\d+X]', '', phone) 
     return cleaned or phone
 
 def format_phone_number(phone):
-    """Memformat nomor dengan masking 3 digit terakhir menjadi XXX."""
+    """Menggunakan range_key yang sudah dimasking XXX, jadi kita hanya mengembalikannya."""
     if not phone or phone == "N/A": return phone
-    
-    # Hapus semua non-digit kecuali + di awal
-    cleaned = re.sub(r'[^\d+]', '', phone)
-    
-    if len(cleaned) <= 3:
-        return cleaned
-    
-    prefix = ""
-    digits = cleaned
-    if cleaned.startswith('+'):
-        prefix = '+'
-        digits = cleaned[1:]
-    
-    if len(digits) < 3:
-        return cleaned
-
-    # Masking 3 digit terakhir
-    masked_part = digits[:-3] + 'XXX'
-    
-    return prefix + masked_part
+    return phone
 
 def clean_service_name(service):
     if not service: return "Unknown"
@@ -148,12 +129,13 @@ def clean_service_name(service):
     return service.strip().title()
 
 def create_keyboard():
+    # +++++ PERUBAHAN DI SINI: MENGHAPUS TOMBOL ADMIN +++++
     keyboard = [
         [
             InlineKeyboardButton("📞GetNumber", url="https://t.me/myzuraisgoodbot?start=ZuraBot"),
-            InlineKeyboardButton("👤Admin", url="https://t.me/Imr1d")
         ]
     ]
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++
     return InlineKeyboardMarkup(keyboard)
 
 def format_live_message(range_val, count, country_name, service, full_message):
@@ -168,11 +150,11 @@ def format_live_message(range_val, count, country_name, service, full_message):
     # Menggunakan spasi untuk perataan (jika di-render di Telegram dengan font monospaced)
     message = (
         "🔥Live message new range\n"
-        "\n" # Baris kosong
+        "\n" 
         f"📱Range    : {range_with_count}\n"
         f"{country_emoji}Country : {country_name}\n"
         f"⚙️ Service : {service}\n"
-        "\n" # Baris kosong
+        "\n" 
         "🗯️Message Available :\n"
         f"<blockquote>{full_message_escaped}</blockquote>"
     )
@@ -181,8 +163,7 @@ def format_live_message(range_val, count, country_name, service, full_message):
 
 async def cleanup_old_messages(app):
     global SENT_MESSAGES
-    # Tracking time untuk SENT_MESSAGES
-    ten_minutes_ago = datetime.now() - timedelta(minutes=10) 
+    ten_minutes_ago = datetime.now() - timedelta(minutes=10)
     
     ranges_to_remove = []
     for range_val, data in SENT_MESSAGES.items():
@@ -191,14 +172,13 @@ async def cleanup_old_messages(app):
             print(f"🧹 Range {range_val} (Count: {data['count']}) sudah lebih dari 10 menit, menghapus dari pelacakan.")
             
     for range_val in ranges_to_remove:
-        # Jika range dihapus dari SENT_MESSAGES, berarti range tersebut dapat muncul lagi (count=1)
         del SENT_MESSAGES[range_val]
 
 
 # FUNGSI BARU: DELETE PESAN LAMA DAN KIRIM ULANG PESAN BARU
 async def delete_and_send_telegram_message(app, range_val, country, service, message_text):
     global SENT_MESSAGES
-    reply_markup = create_keyboard()
+    reply_markup = create_keyboard() # Akan memanggil create_keyboard() yang sudah diperbarui
     
     try:
         if range_val in SENT_MESSAGES:
@@ -315,11 +295,11 @@ class SMSMonitor:
                 service_text = await service_element.inner_text() if await service_element.count() > 0 else "N/A"
                 service = clean_service_name(service_text)
                 
-                # 2. Range/Phone
+                # 2. Range/Phone (Nomor Penuh XXX)
                 phone_element = element.locator(".flex-grow.min-w-0 .text-\\[10px\\].text-slate-500.font-mono")
                 phone_raw = await phone_element.inner_text() if await phone_element.count() > 0 else "N/A"
-                phone = clean_phone_number(phone_raw) # Ini adalah range_key
-                
+                phone = clean_phone_number(phone_raw) 
+
                 # 3. Country
                 country_element = element.locator(".flex-shrink-0 .text-\\[10px\\].text-slate-600.mt-1.font-mono")
                 country_full = await country_element.inner_text() if await country_element.count() > 0 else ""
@@ -331,7 +311,7 @@ class SMSMonitor:
                 message_text = await message_element.inner_text() if await message_element.count() > 0 else ""
                 full_message = message_text.replace('➜', '').strip()
 
-                if phone != 'N/A' and full_message:
+                if 'XXX' in phone and full_message: 
                     messages.append({
                         "range_key": phone, 
                         "country": country_name,
@@ -369,17 +349,16 @@ async def monitor_sms_loop(app):
                     # A. Ambil data SMS
                     msgs = await monitor.fetch_sms()
                     
-                    # B. Filter pesan baru (Nomor + Isi Pesan)
+                    # B. Filter pesan baru (Nomor Penuh XXX + Isi Pesan)
                     new_unique_logs = message_filter.filter(msgs) 
 
                     if new_unique_logs:
                         print(f"✅ Ditemukan {len(new_unique_logs)} log unik baru. Memproses Live Counter (Delete & Send)...")
                         
-                        # C. Proses Live Counter: Kelompokkan berdasarkan Range Key
+                        # C. Proses Live Counter: Kelompokkan berdasarkan Range Key (Nomor Penuh XXX)
                         grouped_logs = {}
                         for log in new_unique_logs:
-                            # Selalu timpa dengan log terbaru yang ditemukan untuk range ini
-                            # Logika ini memastikan hanya satu aksi (kirim/delete+send) per range per fetch
+                            # Log terbaru untuk range yang sama akan menimpa yang lama dalam fetch ini
                             grouped_logs[log['range_key']] = log 
                         
                         print(f"📦 Mengelompokkan ke {len(grouped_logs)} Range unik untuk diproses.")
