@@ -90,7 +90,7 @@ class MessageFilter:
         return out
 message_filter = MessageFilter()
 
-# --- Utility Functions (SAMA) ---
+# --- Utility Functions (DIUBAH) ---
 
 COUNTRY_EMOJI = {
     "NEPAL": "🇳🇵", "IVORY COAST": "🇨🇮", "GUINEA": "🇬🇳", "CENTRAL AFRIKA": "🇨🇫", 
@@ -105,24 +105,31 @@ def clean_phone_number(phone):
     cleaned = re.sub(r'[^\d+]', '', phone)
     return cleaned or phone
 
-def mask_phone_number(phone, visible_start=4, visible_end=4):
+# FUNGSI BARU: Memformat nomor dengan masking 3 digit terakhir
+def format_phone_number(phone):
     if not phone or phone == "N/A": return phone
+    
+    # Hapus semua non-digit kecuali + di awal
+    cleaned = re.sub(r'[^\d+]', '', phone)
+    
+    if len(cleaned) <= 3:
+        return cleaned
+    
+    # Identifikasi jika ada tanda '+' di awal
     prefix = ""
-    digits = phone
-    if phone.startswith('+'):
+    digits = cleaned
+    if cleaned.startswith('+'):
         prefix = '+'
-        digits = phone[1:]
-        
-    if len(digits) <= visible_start + visible_end:
-        return phone
-        
-    digits = re.sub(r'[^\d]', '', digits)
+        digits = cleaned[1:]
+    
+    # Jika digit kurang dari 3 setelah prefix, tidak di-mask
+    if len(digits) < 3:
+        return cleaned
 
-    start_part = digits[:visible_start]
-    end_part = digits[-visible_end:]
-    mask_length = len(digits) - visible_start - visible_end
-    masked_part = '*' * mask_length
-    return prefix + start_part + masked_part + end_part
+    # Masking 3 digit terakhir
+    masked_part = digits[:-3] + 'XXX'
+    
+    return prefix + masked_part
 
 def clean_service_name(service):
     if not service: return "Unknown"
@@ -150,17 +157,24 @@ def create_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
+# FUNGSI DIUBAH: Memperbaiki format pesan
 def format_live_message(range_val, count, country_name, service, full_message):
     country_emoji = get_country_emoji(country_name)
-    masked_range = mask_phone_number(range_val, visible_start=4, visible_end=4)
-    range_with_count = f"<code>{masked_range}</code> ({count}x)" if count > 1 else f"<code>{masked_range}</code>"
+    
+    # Menggunakan fungsi baru untuk format nomor
+    formatted_range = format_phone_number(range_val)
+    
+    range_with_count = f"<code>{formatted_range}</code> ({count}x)" if count > 1 else f"<code>{formatted_range}</code>"
     full_message_escaped = full_message.replace('<', '&lt;').replace('>', '&gt;')
     
+    # Menggunakan spasi untuk perataan (monospaced font di Telegram)
     message = (
         "🔥Live message new range\n"
-        f"📱Range: {range_with_count}\n"
-        f"{country_emoji}Country: {country_name}\n"
-        f"⚙️ Service: {service}\n"
+        "\n" # Baris kosong
+        f"📱Range    : {range_with_count}\n"
+        f"{country_emoji}Country : {country_name}\n"
+        f"⚙️ Service : {service}\n"
+        "\n" # Baris kosong
         "🗯️Message Available :\n"
         f"<blockquote>{full_message_escaped}</blockquote>"
     )
