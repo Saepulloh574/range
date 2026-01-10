@@ -5,11 +5,10 @@ import json
 import time
 from datetime import datetime, timedelta, timezone
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
-# Menghapus: from bs4 import BeautifulSoup
 from typing import Dict, Any, List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder 
-import requests # Masih diperlukan untuk send_tg jika admin message diperlukan
+import requests 
 
 # ==================== KONFIGURASI DENGAN NILAI TETAP ====================
 
@@ -20,11 +19,10 @@ ADMIN_ID = 7184123643
 
 # Konfigurasi Chrome/Playwright
 CHROME_DEBUG_URL = "http://127.0.0.1:9222" # URL CDP standar
-# *** TELAH DIKOREKSI KE CONSOLE ***
 DASHBOARD_URL = "https://x.mnitnetwork.com/mdashboard/console" 
 LOGIN_URL = "https://x.mnitnetwork.com/mauth/login" 
 
-# ==================== GLOBAL STATE & UTILS (SAMA) ====================
+# ==================== GLOBAL STATE & UTILS ====================
 
 SENT_MESSAGES = {} 
 GLOBAL_ASYNC_LOOP = None 
@@ -90,23 +88,24 @@ class MessageFilter:
         return out
 message_filter = MessageFilter()
 
-# --- Utility Functions (DIUBAH) ---
+# --- Utility Functions ---
 
 COUNTRY_EMOJI = {
     "NEPAL": "🇳🇵", "IVORY COAST": "🇨🇮", "GUINEA": "🇬🇳", "CENTRAL AFRIKA": "🇨🇫", 
     "TOGO": "🇹🇬", "TAJIKISTAN": "🇹🇯", "BENIN": "🇧🇯", "SIERRA LEONE": "🇸🇱", 
-    "MADAGASCAR": "🇲🇬", "AFGANISTAN": "🇦🇫", "INDONESIA": "🇮🇩", "UNITED STATES": "🇺🇸" 
+    "MADAGASCAR": "🇲🇬", "AFGANISTAN": "🇦🇫", "INDONESIA": "🇮🇩", "UNITED STATES": "🇺🇸",
+    "ANGOLA": "🇦🇴", "CAMEROON": "🇨🇲", "MOZAMBIQUE": "🇲🇿", "PERU": "🇵🇪", "VIETNAM": "🇻🇳"
 }
 def get_country_emoji(country_name: str) -> str:
-    return COUNTRY_EMOJI.get(country_name.strip().upper(), "❓")
+    return COUNTRY_EMOJI.get(country_name.strip().upper(), "🏳️")
 
 def clean_phone_number(phone):
     if not phone: return "N/A"
     cleaned = re.sub(r'[^\d+]', '', phone)
     return cleaned or phone
 
-# FUNGSI BARU: Memformat nomor dengan masking 3 digit terakhir
 def format_phone_number(phone):
+    """Memformat nomor dengan masking 3 digit terakhir menjadi XXX."""
     if not phone or phone == "N/A": return phone
     
     # Hapus semua non-digit kecuali + di awal
@@ -115,14 +114,12 @@ def format_phone_number(phone):
     if len(cleaned) <= 3:
         return cleaned
     
-    # Identifikasi jika ada tanda '+' di awal
     prefix = ""
     digits = cleaned
     if cleaned.startswith('+'):
         prefix = '+'
         digits = cleaned[1:]
     
-    # Jika digit kurang dari 3 setelah prefix, tidak di-mask
     if len(digits) < 3:
         return cleaned
 
@@ -157,17 +154,16 @@ def create_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# FUNGSI DIUBAH: Memperbaiki format pesan
 def format_live_message(range_val, count, country_name, service, full_message):
+    """Format pesan Telegram dengan perataan kolon dan counter."""
     country_emoji = get_country_emoji(country_name)
     
-    # Menggunakan fungsi baru untuk format nomor
     formatted_range = format_phone_number(range_val)
     
     range_with_count = f"<code>{formatted_range}</code> ({count}x)" if count > 1 else f"<code>{formatted_range}</code>"
     full_message_escaped = full_message.replace('<', '&lt;').replace('>', '&gt;')
     
-    # Menggunakan spasi untuk perataan (monospaced font di Telegram)
+    # Menggunakan spasi untuk perataan (jika di-render di Telegram dengan font monospaced)
     message = (
         "🔥Live message new range\n"
         "\n" # Baris kosong
@@ -194,34 +190,58 @@ async def cleanup_old_messages(app):
     for range_val in ranges_to_remove:
         del SENT_MESSAGES[range_val]
 
-async def send_or_edit_telegram_message(app, range_val, country, service, message_text):
+
+# FUNGSI BARU: DELETE PESAN LAMA DAN KIRIM ULANG PESAN BARU
+async def delete_and_send_telegram_message(app, range_val, country, service, message_text):
     global SENT_MESSAGES
     reply_markup = create_keyboard()
+    
     try:
         if range_val in SENT_MESSAGES:
+            # Langkah 1: Hapus pesan lama
             message_id = SENT_MESSAGES[range_val]['message_id']
-            await app.bot.edit_message_text(
-                chat_id=CHAT_ID,
-                message_id=message_id,
-                text=message_text,
-                reply_markup=reply_markup,
-                parse_mode='HTML'
-            )
-        else:
+            try:
+                await app.bot.delete_message(
+                    chat_id=CHAT_ID,
+                    message_id=message_id
+                )
+                print(f"✅ Berhasil menghapus pesan lama ({message_id}) untuk Range: {range_val}")
+            except Exception as delete_e:
+                # Mengabaikan error jika pesan sudah terhapus
+                if 'Message to delete not found' not in str(delete_e):
+                    print(f"❌ Gagal menghapus pesan Telegram lama: {delete_e}")
+                
+            # Langkah 2: Kirim pesan baru
             sent_message = await app.bot.send_message(
                 chat_id=CHAT_ID,
                 text=message_text,
                 reply_markup=reply_markup,
                 parse_mode='HTML'
             )
+            
+            # Langkah 3: Update message_id di SENT_MESSAGES
+            SENT_MESSAGES[range_val]['message_id'] = sent_message.message_id
+            
+        else:
+            # Kirim pesan baru (untuk range yang baru pertama kali muncul)
+            sent_message = await app.bot.send_message(
+                chat_id=CHAT_ID,
+                text=message_text,
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+            
+            # Tambahkan ke tracking
+            # Catatan: Count=1 harus diatur di luar fungsi ini (di monitor_sms_loop)
+            # Namun, karena ini kasus range baru, count pasti 1. Kita inisialisasi di sini.
             SENT_MESSAGES[range_val] = {
                 'message_id': sent_message.message_id,
-                'count': 1,
+                'count': 1, # Akan di-overwrite jika sudah diproses di loop
                 'timestamp': datetime.now()
             }
+            
     except Exception as e:
-        if 'Message is not modified' not in str(e):
-             print(f"❌ Gagal mengirim/mengedit pesan Telegram: {e}")
+        print(f"❌ Gagal mengirim pesan Telegram baru setelah penghapusan: {e}")
 
 async def send_startup_message(app):
     if not BOT_TOKEN or not CHAT_ID: return
@@ -235,7 +255,7 @@ async def send_startup_message(app):
     except Exception as e:
         print(f"❌ Gagal mengirim pesan startup: {e}")
 
-# ==================== PLAYWRIGHT/SCRAPER CLASS (REVISI KONSEL) ====================
+# ==================== PLAYWRIGHT/SCRAPER CLASS ====================
 
 class SMSMonitor:
     
@@ -244,7 +264,6 @@ class SMSMonitor:
         self.browser = None
         self.page = None
         self.is_logged_in = False 
-        # Selector khusus untuk blok konsol live
         self.CONSOLE_SELECTOR = ".group.flex.flex-col.sm\\:flex-row.sm\\:items-start.gap-3.p-3.rounded-lg"
 
 
@@ -274,25 +293,19 @@ class SMSMonitor:
             
         if self.page.url != self.url:
             try:
-                # Navigasi ke URL konsol
                 await self.page.goto(self.url, wait_until='networkidle', timeout=15000)
             except Exception as e:
                 print(f"❌ Error navigating to console dashboard: {e}")
                 return []
                 
         try:
-            # Tunggu selector blok konsol
             await self.page.wait_for_selector(self.CONSOLE_SELECTOR, timeout=10000)
         except PlaywrightTimeoutError: 
              print("❌ Timeout saat menunggu blok data konsol.")
              return []
 
         messages = []
-        
-        # Menggunakan Playwright API untuk mendapatkan semua blok data
         elements = await self.page.locator(self.CONSOLE_SELECTOR).all()
-
-        SERVICE_KEYWORDS = r'(facebook|whatsapp|instagram|telegram|google|twitter|linkedin|tiktok)'
 
         for element in elements:
             try:
@@ -301,12 +314,6 @@ class SMSMonitor:
                 service_text = await service_element.inner_text() if await service_element.count() > 0 else "N/A"
                 service = clean_service_name(service_text)
                 
-                # Hanya fokus pada WhatsApp dan Facebook (sesuai Pyppeteer sebelumnya, bisa dihapus)
-                if service.strip().upper() not in ["WHATSAPP", "FACEBOOK"]:
-                    # Lanjutkan ke log berikutnya jika bukan layanan yang diinginkan
-                    # HAPUS baris IF ini jika Anda ingin semua layanan
-                    pass 
-
                 # 2. Range/Phone
                 phone_element = element.locator(".flex-grow.min-w-0 .text-\\[10px\\].text-slate-500.font-mono")
                 phone_raw = await phone_element.inner_text() if await phone_element.count() > 0 else "N/A"
@@ -315,7 +322,6 @@ class SMSMonitor:
                 # 3. Country
                 country_element = element.locator(".flex-shrink-0 .text-\\[10px\\].text-slate-600.mt-1.font-mono")
                 country_full = await country_element.inner_text() if await country_element.count() > 0 else ""
-                # Ekstraksi nama negara dari teks (e.g., "ID • INDONESIA")
                 country_match = re.search(r'•\s*(.*)$', country_full.strip())
                 country_name = country_match.group(1).strip() if country_match else "Unknown"
                 
@@ -324,7 +330,6 @@ class SMSMonitor:
                 message_text = await message_element.inner_text() if await message_element.count() > 0 else ""
                 full_message = message_text.replace('➜', '').strip()
 
-                # --- Simpan Hasil ---
                 if phone != 'N/A' and full_message:
                     messages.append({
                         "range_key": phone, 
@@ -333,7 +338,6 @@ class SMSMonitor:
                         "raw_message": full_message 
                     })
             except Exception as e:
-                # Error saat memproses satu blok log, lewati
                 print(f"⚠️ Error memproses satu blok konsol: {e}")
                 continue
                 
@@ -341,7 +345,7 @@ class SMSMonitor:
 
 monitor = SMSMonitor()
 
-# ==================== MAIN LOOP DENGAN LOGIKA LIVE CONSOLE (SAMA) ====================
+# ==================== MAIN LOOP DENGAN LOGIKA DELETE & SEND ====================
 
 async def monitor_sms_loop(app):
     global SENT_MESSAGES
@@ -361,45 +365,53 @@ async def monitor_sms_loop(app):
 
                 if monitor.is_logged_in:
                     
-                    # A. Ambil data SMS (Sekarang dari /console)
+                    # A. Ambil data SMS
                     msgs = await monitor.fetch_sms()
                     
-                    # B. Filter pesan baru
+                    # B. Filter pesan baru (berdasarkan range+isi)
                     new_unique_logs = message_filter.filter(msgs) 
 
                     if new_unique_logs:
-                        print(f"✅ Ditemukan {len(new_unique_logs)} log unik baru. Memproses Live Counter...")
+                        print(f"✅ Ditemukan {len(new_unique_logs)} log unik baru. Memproses Live Counter (Delete & Send)...")
                         
-                        # C. Proses Live Counter dan Kirim/Edit Pesan
+                        # C. Proses Live Counter: Kelompokkan berdasarkan Range Key
+                        grouped_logs = {}
                         for log in new_unique_logs:
-                            range_val = log['range_key']
+                            # Selalu timpa dengan log terbaru yang ditemukan untuk range ini
+                            grouped_logs[log['range_key']] = log 
+                        
+                        print(f"📦 Mengelompokkan ke {len(grouped_logs)} Range unik untuk diproses.")
+
+                        for range_val, log in grouped_logs.items():
                             
+                            last_message = log['raw_message'] 
+                            
+                            # Logika Peningkatan Counter
                             if range_val in SENT_MESSAGES:
                                 old_data = SENT_MESSAGES[range_val]
                                 new_count = old_data['count'] + 1
                                 SENT_MESSAGES[range_val]['count'] = new_count
                                 SENT_MESSAGES[range_val]['timestamp'] = datetime.now()
-                                
-                                message_text = format_live_message(
-                                    range_val, new_count, log['country'], log['service'], log['raw_message']
-                                )
-                                await send_or_edit_telegram_message(app, range_val, log['country'], log['service'], message_text)
-
                             else:
-                                message_text = format_live_message(
-                                    range_val, 1, log['country'], log['service'], log['raw_message']
-                                )
-                                await send_or_edit_telegram_message(app, range_val, log['country'], log['service'], message_text)
+                                new_count = 1
+                                # Catatan: SENT_MESSAGES diinisialisasi di dalam delete_and_send_telegram_message untuk range baru.
+
+                            # Siapkan pesan
+                            message_text = format_live_message(
+                                range_val, new_count, log['country'], log['service'], last_message
+                            )
+                            
+                            # Panggil fungsi BARU: DELETE & SEND
+                            # Fungsi ini akan menghapus yang lama dan mengirim yang baru (dan mengupdate SENT_MESSAGES)
+                            await delete_and_send_telegram_message(app, range_val, log['country'], log['service'], message_text)
                             
                             await asyncio.sleep(0.5) 
 
-                    # D. Bersihkan pesan lama
+                    # D. Bersihkan pesan lama (hapus dari tracking SENT_MESSAGES)
                     await cleanup_old_messages(app)
                     
                     # E. Refresh halaman
                     if monitor.page:
-                         # Pada halaman konsol, reload mungkin kurang efektif
-                         # Disarankan menggunakan page.goto ulang ke URL yang sama
                          await monitor.page.goto(DASHBOARD_URL, wait_until='networkidle', timeout=10000)
                          print("🔄 Halaman Konsol di-reload (refresh).")
 
@@ -416,7 +428,7 @@ async def monitor_sms_loop(app):
             # Waktu tunggu antara cek
             await asyncio.sleep(10)
 
-# ==================== START EXECUTION (SAMA) ====================
+# ==================== START EXECUTION ====================
 
 async def main():
     if not BOT_TOKEN or not CHAT_ID:
