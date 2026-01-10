@@ -14,7 +14,7 @@ import requests # Masih diperlukan untuk send_tg jika admin message diperlukan
 # ==================== KONFIGURASI DENGAN NILAI TETAP ====================
 
 # Konfigurasi Telegram
-BOT_TOKEN = "7777855547:AAGTwJ01fjxjbd2TLJd8wmSEnUabD_yu2G4"
+BOT_TOKEN = "8558006836:AAGR3N4DwXYSlpOxjRvjZcPAmC1CUWRJexY"
 CHAT_ID = "-1003358198353"
 ADMIN_ID = 7184123643 
 
