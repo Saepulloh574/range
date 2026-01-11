@@ -259,6 +259,8 @@ class SMSMonitor:
         self.CONSOLE_SELECTOR = ".group.flex.flex-col.sm\\:flex-row.sm\\:items-start.gap-3.p-3.rounded-lg"
         # Menentukan layanan yang diizinkan (case-insensitive)
         self.ALLOWED_SERVICES = ['whatsapp', 'facebook']
+        # Menentukan negara yang DILARANG (Case-insensitive)
+        self.BANNED_COUNTRIES = ['angola'] 
 
 
     async def initialize(self, p_instance):
@@ -326,19 +328,16 @@ class SMSMonitor:
                 service_text_raw = await service_element.inner_text() if await service_element.count() > 0 else "N/A"
                 
                 # Cek Service Filter menggunakan raw text (Case-insensitive)
-                # Tambahkan pemeriksaan sebelum pembersihan nama, karena clean_service_name 
-                # mengubahnya menjadi Title/Standard name
-                
                 service_lower = service_text_raw.strip().lower()
                 
-                is_allowed = False
+                is_allowed_service = False
                 for allowed in self.ALLOWED_SERVICES:
                      if allowed in service_lower:
-                         is_allowed = True
+                         is_allowed_service = True
                          break
                 
-                if not is_allowed:
-                    continue # Lewati jika bukan WhatsApp atau Facebook (atau mengandung kata itu)
+                if not is_allowed_service:
+                    continue # Lewati jika bukan WhatsApp atau Facebook
                 
                 # Lanjutkan pembersihan nama service untuk ditampilkan
                 service = clean_service_name(service_text_raw)
@@ -353,6 +352,12 @@ class SMSMonitor:
                 country_full = await country_element.inner_text() if await country_element.count() > 0 else ""
                 country_match = re.search(r'•\s*(.*)$', country_full.strip())
                 country_name = country_match.group(1).strip() if country_match else "Unknown"
+                
+                # --- FILTER NEGARA (Angola) ---
+                if country_name.strip().lower() in self.BANNED_COUNTRIES:
+                    print(f"🚫 Range {phone} dilewati karena Negara: {country_name} (dilarang).")
+                    continue
+                # ------------------------------
                 
                 # 4. Message (FULL)
                 message_element = element.locator(".flex-grow.min-w-0 p")
@@ -395,7 +400,7 @@ async def monitor_sms_loop(app):
 
                 if monitor.is_logged_in:
                     
-                    # A. Ambil data SMS (termasuk filter Service)
+                    # A. Ambil data SMS (termasuk filter Service dan filter Negara Banned)
                     msgs = await monitor.fetch_sms()
                     
                     # B. Filter pesan baru (Nomor Penuh XXX + Isi Pesan)
@@ -405,7 +410,6 @@ async def monitor_sms_loop(app):
                         print(f"✅ Ditemukan {len(new_unique_logs)} log unik baru. Memproses Live Counter (Delete & Send)...")
                         
                         # C. Proses Live Counter: Kelompokkan berdasarkan Range Key (Nomor Penuh XXX)
-                        # Saat ini, grouped_logs hanya menyimpan entri log terakhir untuk setiap range_key yang unik
                         grouped_logs = {}
                         for log in new_unique_logs:
                             grouped_logs[log['range_key']] = log 
@@ -438,11 +442,6 @@ async def monitor_sms_loop(app):
                     # D. Bersihkan pesan lama (hapus dari tracking SENT_MESSAGES setelah 10 menit)
                     await cleanup_old_messages(app)
                     
-                    # E. Hapus bagian Refresh halaman otomatis (sesuai permintaan)
-                    # if monitor.page:
-                    #      await monitor.page.goto(DASHBOARD_URL, wait_until='networkidle', timeout=10000)
-                    #      print("🔄 Halaman Konsol di-reload (refresh).")
-
 
                 else:
                     print("⚠️ TIDAK LOGIN. Pastikan Anda sudah login manual di browser Chrome yang terhubung ke CDP.")
