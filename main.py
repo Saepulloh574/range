@@ -1,4 +1,4 @@
-import asyncio
+Import asyncio
 import os
 import re
 import json
@@ -323,21 +323,33 @@ class SMSMonitor:
 
         for element in elements:
             try:
+                
+                # 3. Country (Harus Diambil Pertama untuk Filter Banned)
+                country_element = element.locator(".flex-shrink-0 .text-\\[10px\\].text-slate-600.mt-1.font-mono")
+                country_full = await country_element.inner_text() if await country_element.count() > 0 else ""
+                country_match = re.search(r'•\s*(.*)$', country_full.strip())
+                country_name = country_match.group(1).strip() if country_match else "Unknown"
+                
+                # --- FILTER NEGARA DILARANG (Angola) ---
+                if country_name.lower() in self.BANNED_COUNTRIES:
+                    # print(f"🚫 Range diblokir karena negara DILARANG: {country_name}")
+                    continue 
+                
                 # 1. Service (Raw)
                 service_element = element.locator(".flex-grow.min-w-0 .text-xs.font-bold.text-blue-400")
                 service_text_raw = await service_element.inner_text() if await service_element.count() > 0 else "N/A"
                 
-                # Cek Service Filter menggunakan raw text (Case-insensitive)
+                # --- FILTER LAYANAN DIIZINKAN (WhatsApp/Facebook) ---
                 service_lower = service_text_raw.strip().lower()
                 
-                is_allowed_service = False
+                is_allowed = False
                 for allowed in self.ALLOWED_SERVICES:
                      if allowed in service_lower:
-                         is_allowed_service = True
+                         is_allowed = True
                          break
                 
-                if not is_allowed_service:
-                    continue # Lewati jika bukan WhatsApp atau Facebook
+                if not is_allowed:
+                    continue # Lewati jika bukan WhatsApp atau Facebook (atau mengandung kata itu)
                 
                 # Lanjutkan pembersihan nama service untuk ditampilkan
                 service = clean_service_name(service_text_raw)
@@ -346,18 +358,6 @@ class SMSMonitor:
                 phone_element = element.locator(".flex-grow.min-w-0 .text-\\[10px\\].text-slate-500.font-mono")
                 phone_raw = await phone_element.inner_text() if await phone_element.count() > 0 else "N/A"
                 phone = clean_phone_number(phone_raw) 
-
-                # 3. Country
-                country_element = element.locator(".flex-shrink-0 .text-\\[10px\\].text-slate-600.mt-1.font-mono")
-                country_full = await country_element.inner_text() if await country_element.count() > 0 else ""
-                country_match = re.search(r'•\s*(.*)$', country_full.strip())
-                country_name = country_match.group(1).strip() if country_match else "Unknown"
-                
-                # --- FILTER NEGARA (Angola) ---
-                if country_name.strip().lower() in self.BANNED_COUNTRIES:
-                    print(f"🚫 Range {phone} dilewati karena Negara: {country_name} (dilarang).")
-                    continue
-                # ------------------------------
                 
                 # 4. Message (FULL)
                 message_element = element.locator(".flex-grow.min-w-0 p")
@@ -400,7 +400,7 @@ async def monitor_sms_loop(app):
 
                 if monitor.is_logged_in:
                     
-                    # A. Ambil data SMS (termasuk filter Service dan filter Negara Banned)
+                    # A. Ambil data SMS (termasuk filter Service dan Banned Country)
                     msgs = await monitor.fetch_sms()
                     
                     # B. Filter pesan baru (Nomor Penuh XXX + Isi Pesan)
@@ -410,6 +410,7 @@ async def monitor_sms_loop(app):
                         print(f"✅ Ditemukan {len(new_unique_logs)} log unik baru. Memproses Live Counter (Delete & Send)...")
                         
                         # C. Proses Live Counter: Kelompokkan berdasarkan Range Key (Nomor Penuh XXX)
+                        # Saat ini, grouped_logs hanya menyimpan entri log terakhir untuk setiap range_key yang unik
                         grouped_logs = {}
                         for log in new_unique_logs:
                             grouped_logs[log['range_key']] = log 
@@ -442,6 +443,11 @@ async def monitor_sms_loop(app):
                     # D. Bersihkan pesan lama (hapus dari tracking SENT_MESSAGES setelah 10 menit)
                     await cleanup_old_messages(app)
                     
+                    # E. Hapus bagian Refresh halaman otomatis (sesuai permintaan)
+                    # if monitor.page:
+                    #      await monitor.page.goto(DASHBOARD_URL, wait_until='networkidle', timeout=10000)
+                    #      print("🔄 Halaman Konsol di-reload (refresh).")
+
 
                 else:
                     print("⚠️ TIDAK LOGIN. Pastikan Anda sudah login manual di browser Chrome yang terhubung ke CDP.")
