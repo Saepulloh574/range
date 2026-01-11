@@ -13,7 +13,7 @@ import requests
 # ==================== KONFIGURASI DENGAN NILAI TETAP ====================
 
 # Konfigurasi Telegram
-BOT_TOKEN = "8558006836:AAGR3N4DwXYSlpOxRvtjzckPAmC1CUWRJexY"
+BOT_TOKEN = "8264103317:AAG_-LZQIxrMDIlLlttWQqIvA9xu_GNMwnc"
 CHAT_ID = "-1003358198353"
 ADMIN_ID = 7184123643 
 
