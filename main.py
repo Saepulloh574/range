@@ -130,12 +130,14 @@ def clean_service_name(service):
     s_lower = service.strip().lower()
     for k, v in maps.items():
         if k in s_lower: return v
+    if s_lower in ['ваш', 'your', 'service', 'code', 'pin']: return "Unknown Service"
     return service.strip().title()
 
 def create_keyboard():
     keyboard = [[InlineKeyboardButton("📞GetNumber", url="https://t.me/myzuraisgoodbot?start=ZuraBot")]]
     return InlineKeyboardMarkup(keyboard)
 
+# --- FUNGSI SIMPAN JSON DENGAN UNICODE ESCAPE ---
 def save_to_inline_json(range_val, country_name, service):
     if service.lower() != "facebook":
         return
@@ -156,16 +158,24 @@ def save_to_inline_json(range_val, country_name, service):
         if any(item['range'] == range_val for item in data_list):
             return
 
+        # Simpan emoji dalam variabel dulu
+        emoji_char = get_country_emoji(country_name)
+
         new_entry = {
-            "range": range_val, "country": country_name.upper(), "emoji": get_country_emoji(country_name)
+            "range": range_val, 
+            "country": country_name.upper(), 
+            "emoji": emoji_char
         }
         data_list.append(new_entry)
+        
         if len(data_list) > 10:
             data_list = data_list[-10:]
 
+        # MENGGUNAKAN ensure_ascii=True agar emoji disimpan sebagai \ud83c...
         with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data_list, f, indent=2, ensure_ascii=False)
-        print(f"📂 [JSON] Facebook Saved: {range_val}")
+            json.dump(data_list, f, indent=2, ensure_ascii=True)
+            
+        print(f"📂 [JSON] Facebook Saved (Unicode): {range_val}")
     except Exception as e:
         print(f"❌ JSON Error: {e}")
 
@@ -195,20 +205,16 @@ async def delete_and_send_telegram_message(app, range_val, country, service, mes
     reply_markup = create_keyboard() 
     
     try:
-        # CEK APAKAH SUDAH ADA MESSAGE_ID UNTUK DIHAPUS
         if range_val in SENT_MESSAGES and 'message_id' in SENT_MESSAGES[range_val]:
             old_mid = SENT_MESSAGES[range_val]['message_id']
             try:
                 await app.bot.delete_message(chat_id=CHAT_ID, message_id=old_mid)
-            except:
-                pass
+            except: pass
         
-        # KIRIM PESAN BARU
         sent_message = await app.bot.send_message(
             chat_id=CHAT_ID, text=message_text, reply_markup=reply_markup, parse_mode='HTML'
         )
         
-        # UPDATE TRACKING
         if range_val not in SENT_MESSAGES:
             SENT_MESSAGES[range_val] = {'count': 1}
             
