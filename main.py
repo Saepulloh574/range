@@ -8,7 +8,6 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 from typing import Dict, Any, List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder 
-import requests 
 
 # ==================== KONFIGURASI ====================
 
@@ -18,60 +17,27 @@ ADMIN_ID = 7184123643
 
 CHROME_DEBUG_URL = "http://127.0.0.1:9222"
 DASHBOARD_URL = "https://x.mnitnetwork.com/mdashboard/console" 
-LOGIN_URL = "https://x.mnitnetwork.com/mauth/login" 
 
 # ==================== GLOBAL STATE & UTILS ====================
 
 SENT_MESSAGES = {} 
-GLOBAL_ASYNC_LOOP = None 
 
 class MessageFilter:
-    CLEANUP_KEY = '__LAST_CLEANUP_GMT__' 
     def __init__(self, file='range_cache_mnit.json'): 
         self.file = file
         if os.path.exists(self.file):
-            try:
-                os.remove(self.file)
-                print(f"🗑️ Cache lama '{self.file}' dihapus.")
+            try: os.remove(self.file)
             except: pass
-        
-        self.cache = self._load() 
-        self.last_cleanup_date_gmt = self.cache.pop(self.CLEANUP_KEY, '19700101') 
-        self._cleanup() 
-        
-    def _load(self) -> Dict[str, Dict[str, Any]]:
-        if os.path.exists(self.file) and os.stat(self.file).st_size > 0:
-            try:
-                with open(self.file, 'r') as f: return json.load(f)
-            except: return {}
-        return {}
-        
-    def _save(self): 
-        temp_cache = self.cache.copy()
-        temp_cache[self.CLEANUP_KEY] = self.last_cleanup_date_gmt
-        try:
-             json.dump(temp_cache, open(self.file,'w'), indent=2)
-        except: pass
-    
-    def _cleanup(self):
-        now_gmt = datetime.now(timezone.utc).strftime('%Y%m%d')
-        if now_gmt > self.last_cleanup_date_gmt:
-            self.cache = {} 
-            self.last_cleanup_date_gmt = now_gmt
-        self._save()
-        
+        self.cache = {}
+
     def key(self, d: Dict[str, Any]) -> str: 
         return f"{d.get('range_key')}_{hash(d.get('raw_message'))}" 
         
     def is_dup(self, d: Dict[str, Any]) -> bool:
-        self._cleanup() 
-        key = self.key(d)
-        return key in self.cache
+        return self.key(d) in self.cache
         
     def add(self, d: Dict[str, Any]):
-        key = self.key(d)
-        self.cache[key] = {'timestamp':datetime.now().isoformat()} 
-        self._save()
+        self.cache[self.key(d)] = {'timestamp': datetime.now().isoformat()}
         
     def filter(self, lst: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         out = []
@@ -117,15 +83,22 @@ def clean_service_name(service):
 def create_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("📞GetNumber", url="https://t.me/myzuraisgoodbot?start=ZuraBot")]])
 
-# --- JSON STORAGE LOGIC (Facebook Only - Max 10) ---
+# --- JSON STORAGE LOGIC (Dinamis Path) ---
 
 def save_to_inline_json(range_val, country_name, service):
-    """Menyimpan data Facebook ke get/inline.json dengan sistem FIFO limit 10."""
+    """Menyimpan data Facebook ke ../get/inline.json (Max 10 FIFO)"""
     if service.lower() != "facebook":
         return
 
-    file_path = 'get/inline.json'
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    # Logika Path: Naik satu tingkat dari folder 'range' ke 'Administrator', lalu masuk ke 'get'
+    current_dir = os.path.dirname(os.path.abspath(__file__)) # folder range
+    parent_dir = os.path.dirname(current_dir) # folder Administrator
+    target_folder = os.path.join(parent_dir, 'get')
+    file_path = os.path.join(target_folder, 'inline.json')
+
+    # Pastikan folder 'get' ada
+    if not os.path.exists(target_folder):
+        os.makedirs(target_folder, exist_ok=True)
 
     data_list = []
     if os.path.exists(file_path):
@@ -135,11 +108,10 @@ def save_to_inline_json(range_val, country_name, service):
         except:
             data_list = []
 
-    # Cek duplikat di file
+    # Hindari duplikat range di dalam file
     if any(item['range'] == range_val for item in data_list):
         return
 
-    # Entry Baru
     new_entry = {
         "range": range_val,
         "country": country_name.upper(),
@@ -148,184 +120,150 @@ def save_to_inline_json(range_val, country_name, service):
 
     data_list.append(new_entry)
 
-    # FIFO: Jika > 10, ambil 10 terbaru (buang yang paling atas)
+    # Batasi 10 data (Hapus yang paling lama/paling atas)
     if len(data_list) > 10:
         data_list = data_list[-10:]
 
     try:
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data_list, f, indent=2, ensure_ascii=False)
-        print(f"📂 [JSON] Saved Facebook Range: {range_val}")
+        print(f"📂 [JSON] Update: {file_path}")
     except Exception as e:
-        print(f"❌ Error Saving JSON: {e}")
+        print(f"❌ JSON Error: {e}")
 
 # --- Message Formatter ---
 
 def format_live_message(range_val, count, country_name, service, full_message):
-    country_emoji = get_country_emoji(country_name)
-    range_with_count = f"<code>{range_val}</code> ({count}x)" if count > 1 else f"<code>{range_val}</code>"
-    full_message_escaped = full_message.replace('<', '&lt;').replace('>', '&gt;')
-    
+    emoji = get_country_emoji(country_name)
+    r_count = f"<code>{range_val}</code> ({count}x)" if count > 1 else f"<code>{range_val}</code>"
+    msg_esc = full_message.replace('<', '&lt;').replace('>', '&gt;')
     return (
         "🔥Live message new range\n\n"
-        f"📱Range    : {range_with_count}\n"
-        f"{country_emoji}Country : {country_name}\n"
+        f"📱Range    : {r_count}\n"
+        f"{emoji}Country : {country_name}\n"
         f"⚙️ Service : {service}\n\n"
         "🗯️Message Available :\n"
-        f"<blockquote>{full_message_escaped}</blockquote>"
+        f"<blockquote>{msg_esc}</blockquote>"
     )
 
-# ==================== CORE ACTIONS ====================
+# ==================== ACTIONS ====================
 
 async def delete_and_send_telegram_message(app, range_val, country, service, message_text):
     global SENT_MESSAGES
     
-    # Simpan ke JSON jika Facebook
+    # Simpan ke file JSON (Hanya Facebook)
     save_to_inline_json(range_val, country, service)
     
-    reply_markup = create_keyboard() 
+    kb = create_keyboard() 
     try:
         if range_val in SENT_MESSAGES:
-            message_id = SENT_MESSAGES[range_val]['message_id']
-            try:
-                await app.bot.delete_message(chat_id=CHAT_ID, message_id=message_id)
+            old_mid = SENT_MESSAGES[range_val]['message_id']
+            try: await app.bot.delete_message(chat_id=CHAT_ID, message_id=old_mid)
             except: pass
                 
-            sent_message = await app.bot.send_message(
-                chat_id=CHAT_ID, text=message_text, reply_markup=reply_markup, parse_mode='HTML'
-            )
-            SENT_MESSAGES[range_val]['message_id'] = sent_message.message_id
+        sent = await app.bot.send_message(chat_id=CHAT_ID, text=message_text, reply_markup=kb, parse_mode='HTML')
+        
+        if range_val in SENT_MESSAGES:
+            SENT_MESSAGES[range_val]['message_id'] = sent.message_id
         else:
-            sent_message = await app.bot.send_message(
-                chat_id=CHAT_ID, text=message_text, reply_markup=reply_markup, parse_mode='HTML'
-            )
-            SENT_MESSAGES[range_val] = {
-                'message_id': sent_message.message_id,
-                'count': 1, 
-                'timestamp': datetime.now()
-            }
+            SENT_MESSAGES[range_val] = {'message_id': sent.message_id, 'count': 1, 'timestamp': datetime.now()}
+            
     except Exception as e:
         print(f"❌ Telegram Error: {e}")
 
-async def cleanup_old_messages(app):
+async def cleanup_old_messages():
     global SENT_MESSAGES
     limit = datetime.now() - timedelta(minutes=10)
-    to_remove = [r for r, d in SENT_MESSAGES.items() if d['timestamp'] < limit]
-    for r in to_remove: del SENT_MESSAGES[r]
+    to_rem = [r for r, d in SENT_MESSAGES.items() if d['timestamp'] < limit]
+    for r in to_rem: del SENT_MESSAGES[r]
 
-# ==================== SCRAPER CLASS ====================
+# ==================== SCRAPER ====================
 
 class SMSMonitor:
-    def __init__(self, url=DASHBOARD_URL): 
-        self.url = url
-        self.browser = None
+    def __init__(self): 
+        self.url = DASHBOARD_URL
         self.page = None
         self.is_logged_in = False 
-        self.CONSOLE_SELECTOR = ".group.flex.flex-col.sm\\:flex-row.sm\\:items-start.gap-3.p-3.rounded-lg"
-        self.ALLOWED_SERVICES = ['whatsapp', 'facebook']
-        self.BANNED_COUNTRIES = ['angola'] 
+        self.SELECTOR = ".group.flex.flex-col.sm\\:flex-row.sm\\:items-start.gap-3.p-3.rounded-lg"
+        self.ALLOWED = ['whatsapp', 'facebook']
+        self.BANNED = ['angola'] 
 
     async def initialize(self, p_instance):
-        self.browser = await p_instance.chromium.connect_over_cdp(CHROME_DEBUG_URL)
-        context = self.browser.contexts[0] if self.browser.contexts else await self.browser.new_context()
+        browser = await p_instance.chromium.connect_over_cdp(CHROME_DEBUG_URL)
+        context = browser.contexts[0]
         self.page = context.pages[0] if context.pages else await context.new_page()
 
-    async def check_url_login_status(self) -> bool:
-        try:
-            self.is_logged_in = self.page.url.startswith("https://x.mnitnetwork.com/mdashboard")
-            return self.is_logged_in
-        except: return False
-
     async def fetch_sms(self) -> List[Dict[str, Any]]:
-        if not self.page or not self.is_logged_in: return []
+        if not self.page: return []
         if self.page.url != self.url:
             try: await self.page.goto(self.url, wait_until='networkidle', timeout=15000)
             except: return []
                 
-        try: await self.page.wait_for_selector(self.CONSOLE_SELECTOR, timeout=10000)
+        try: await self.page.wait_for_selector(self.SELECTOR, timeout=10000)
         except: return []
 
-        messages = []
-        elements = await self.page.locator(self.CONSOLE_SELECTOR).all()
+        results = []
+        elements = await self.page.locator(self.SELECTOR).all()
 
-        for element in elements:
+        for el in elements:
             try:
-                # Country Filter
-                country_element = element.locator(".flex-shrink-0 .text-\\[10px\\].text-slate-600.mt-1.font-mono")
-                country_full = await country_element.inner_text() if await country_element.count() > 0 else ""
-                country_match = re.search(r'•\s*(.*)$', country_full.strip())
-                country_name = country_match.group(1).strip() if country_match else "Unknown"
+                # Country
+                c_el = el.locator(".flex-shrink-0 .text-\\[10px\\].text-slate-600.mt-1.font-mono")
+                c_raw = await c_el.inner_text() if await c_el.count() > 0 else ""
+                c_name = re.search(r'•\s*(.*)$', c_raw.strip()).group(1).strip() if "•" in c_raw else "Unknown"
+                if c_name.lower() in self.BANNED: continue 
                 
-                if country_name.lower() in self.BANNED_COUNTRIES: continue 
+                # Service
+                s_el = el.locator(".flex-grow.min-w-0 .text-xs.font-bold.text-blue-400")
+                s_raw = await s_el.inner_text() if await s_el.count() > 0 else ""
+                if not any(a in s_raw.lower() for a in self.ALLOWED): continue
+                service = clean_service_name(s_raw)
                 
-                # Service Filter
-                service_element = element.locator(".flex-grow.min-w-0 .text-xs.font-bold.text-blue-400")
-                service_raw = await service_element.inner_text() if await service_element.count() > 0 else "N/A"
-                if not any(a in service_raw.lower() for a in self.ALLOWED_SERVICES): continue
+                # Phone
+                p_el = el.locator(".flex-grow.min-w-0 .text-\\[10px\\].text-slate-500.font-mono")
+                phone = clean_phone_number(await p_el.inner_text() if await p_el.count() > 0 else "")
                 
-                service = clean_service_name(service_raw)
-                
-                # Phone & Msg
-                phone_element = element.locator(".flex-grow.min-w-0 .text-\\[10px\\].text-slate-500.font-mono")
-                phone = clean_phone_number(await phone_element.inner_text() if await phone_element.count() > 0 else "N/A")
-                
-                message_element = element.locator(".flex-grow.min-w-0 p")
-                full_message = (await message_element.inner_text()).replace('➜', '').strip()
+                # Message
+                m_el = el.locator(".flex-grow.min-w-0 p")
+                msg = (await m_el.inner_text()).replace('➜', '').strip()
 
-                if 'XXX' in phone and full_message: 
-                    messages.append({
-                        "range_key": phone, "country": country_name,
-                        "service": service, "raw_message": full_message 
-                    })
+                if 'XXX' in phone and msg: 
+                    results.append({"range_key": phone, "country": c_name, "service": service, "raw_message": msg})
             except: continue
-        return messages
+        return results
 
 monitor = SMSMonitor()
 
-# ==================== MAIN LOOP ====================
-
-async def monitor_sms_loop(app):
-    async with async_playwright() as p:
-        try: await monitor.initialize(p)
-        except: return 
-        
-        while True:
-            try:
-                await monitor.check_url_login_status() 
-                if monitor.is_logged_in:
-                    msgs = await monitor.fetch_sms()
-                    new_logs = message_filter.filter(msgs) 
-
-                    if new_logs:
-                        # Group by range to handle multiple unique messages at once
-                        grouped = {}
-                        for log in new_logs: grouped[log['range_key']] = log 
-
-                        for range_val, log in grouped.items():
-                            if range_val in SENT_MESSAGES:
-                                SENT_MESSAGES[range_val]['count'] += 1
-                                SENT_MESSAGES[range_val]['timestamp'] = datetime.now()
-                            else:
-                                pass # initialized in send function
-                            
-                            count = SENT_MESSAGES.get(range_val, {}).get('count', 1)
-                            text = format_live_message(range_val, count, log['country'], log['service'], log['raw_message'])
-                            await delete_and_send_telegram_message(app, range_val, log['country'], log['service'], text)
-                            await asyncio.sleep(0.5) 
-
-                    await cleanup_old_messages(app)
-                else:
-                    try: await monitor.page.goto(DASHBOARD_URL, timeout=5000)
-                    except: pass
-            except Exception as e:
-                print(f"Loop Error: {e}")
-            await asyncio.sleep(10)
+# ==================== MAIN ====================
 
 async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    print("🤖 Bot Started.")
-    await monitor_sms_loop(app)
+    print("🤖 Monitoring Started...")
+    
+    async with async_playwright() as p:
+        await monitor.initialize(p)
+        while True:
+            try:
+                msgs = await monitor.fetch_sms()
+                new_logs = message_filter.filter(msgs) 
+
+                if new_logs:
+                    # Ambil data unik per range terbaru saja
+                    grouped = {log['range_key']: log for log in new_logs}
+                    for r_val, log in grouped.items():
+                        if r_val in SENT_MESSAGES:
+                            SENT_MESSAGES[r_val]['count'] += 1
+                            SENT_MESSAGES[r_val]['timestamp'] = datetime.now()
+                        
+                        current_count = SENT_MESSAGES.get(r_val, {}).get('count', 1)
+                        text = format_live_message(r_val, current_count, log['country'], log['service'], log['raw_message'])
+                        await delete_and_send_telegram_message(app, r_val, log['country'], log['service'], text)
+                        await asyncio.sleep(0.5) 
+
+                await cleanup_old_messages()
+            except Exception as e: print(f"Loop Error: {e}")
+            await asyncio.sleep(10)
 
 if __name__ == "__main__":
     try: asyncio.run(main())
-    except: print("Offline.")
+    except KeyboardInterrupt: pass
