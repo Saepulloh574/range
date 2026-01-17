@@ -73,7 +73,6 @@ class MessageFilter:
     def key(self, d: Dict[str, Any]) -> str: 
         phone = d.get('range_key')
         raw_message = d.get('raw_message')
-        # Gunakan hash yang lebih sederhana atau hilangkan jika raw_message selalu berbeda
         return f"{phone}_{hash(raw_message)}" 
         
     def is_dup(self, d: Dict[str, Any]) -> bool:
@@ -92,7 +91,6 @@ class MessageFilter:
         out = []
         for d in lst:
             if d.get('range_key') != 'N/A' and d.get('raw_message'):
-                # Cek duplikasi, lalu tambahkan ke cache jika unik
                 if not self.is_dup(d):
                     out.append(d)
                     self.add(d) 
@@ -104,20 +102,19 @@ message_filter = MessageFilter()
 COUNTRY_EMOJI = {
     "NEPAL": "🇳🇵", "IVORY COAST": "🇨🇮", "GUINEA": "🇬🇳", "CENTRAL AFRIKA": "🇨🇫", 
     "TOGO": "🇹🇬", "TAJIKISTAN": "🇹🇯", "BENIN": "🇧🇯", "SIERRA LEONE": "🇸🇱", 
-    "MADAGASCAR": "🇲🇬", 
-    "AFGHANISTAN": "🇦🇫", 
-    "NETHERLANDS": "🇳🇱",  
-    "INDONESIA": "🇮🇩", "UNITED STATES": "🇺🇸",
-    "ANGOLA": "🇦🇴", "CAMEROON": "🇨🇲", "MOZAMBIQUE": "🇲🇿", "PERU": "🇵🇪", "VIETNAM": "🇻🇳",
-    "GEORGIA": "🇬🇪"
+    "MADAGASCAR": "🇲🇬", "AFGHANISTAN": "🇦🇫", "NETHERLANDS": "🇳🇱",  
+    "INDONESIA": "🇮🇩", "UNITED STATES": "🇺🇸", "ANGOLA": "🇦🇴", 
+    "CAMEROON": "🇨🇲", "MOZAMBIQUE": "🇲🇿", "PERU": "🇵🇪", "VIETNAM": "🇻🇳",
+    "MYANMAR": "🇲🇲", "GEORGIA": "🇬🇪"
 }
+
 def get_country_emoji(country_name: str) -> str:
-    # Mengubah fallback dari ❓ menjadi 🇹🇾
     return COUNTRY_EMOJI.get(country_name.strip().upper(), "🇹🇾")
 
 def clean_phone_number(phone):
     if not phone: return "N/A"
-    cleaned = re.sub(r'[^\d+X]', '', phone) 
+    # Menghapus simbol :: atau spasi yang nempel di nomor
+    cleaned = re.sub(r'[^0-9X]', '', phone) 
     return cleaned or phone
 
 def format_phone_number(phone):
@@ -126,411 +123,215 @@ def format_phone_number(phone):
 
 def clean_service_name(service):
     if not service: return "Unknown"
-    
     maps = {
         'facebook': 'Facebook', 'whatsapp': 'WhatsApp', 'instagram': 'Instagram', 
         'telegram': 'Telegram', 'google': 'Google', 'twitter': 'Twitter', 
         'tiktok': 'TikTok', 'laz+nxcar': 'Facebook', 'mnitnetwork': 'M-NIT Network',
     }
     s_lower = service.strip().lower()
-
     for k, v in maps.items():
         if k in s_lower: return v
-            
     if s_lower in ['ваш', 'your', 'service', 'code', 'pin']: return "Unknown Service"
-            
     return service.strip().title()
 
 def create_keyboard():
-    keyboard = [
-        [
-            InlineKeyboardButton("📞GetNumber", url="https://t.me/myzuraisgoodbot?start=ZuraBot"),
-        ]
-    ]
+    keyboard = [[InlineKeyboardButton("📞GetNumber", url="https://t.me/myzuraisgoodbot?start=ZuraBot")]]
     return InlineKeyboardMarkup(keyboard)
 
-# --- FUNGSI SIMPAN JSON (FACEBOOK ONLY - FIFO 10) ---
+# --- FUNGSI SIMPAN JSON (FACEBOOK ONLY) ---
 def save_to_inline_json(range_val, country_name, service):
-    """Menyimpan data Facebook ke folder get sejajar dengan folder range."""
     if service.lower() != "facebook":
         return
+    try:
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        target_folder = os.path.join(parent_dir, 'get')
+        file_path = os.path.join(target_folder, 'inline.json')
 
-    # Mendapatkan path absolut folder 'get' yang sejajar dengan folder 'range'
-    current_dir = os.path.dirname(os.path.abspath(__file__)) # Folder 'range'
-    parent_dir = os.path.dirname(current_dir) # Folder 'Administrator'
-    target_folder = os.path.join(parent_dir, 'get')
-    file_path = os.path.join(target_folder, 'inline.json')
+        if not os.path.exists(target_folder):
+            os.makedirs(target_folder, exist_ok=True)
 
-    # Pastikan folder 'get' ada
-    if not os.path.exists(target_folder):
-        os.makedirs(target_folder, exist_ok=True)
-
-    data_list = []
-    if os.path.exists(file_path):
-        try:
+        data_list = []
+        if os.path.exists(file_path):
             with open(file_path, 'r', encoding='utf-8') as f:
                 data_list = json.load(f)
-        except:
-            data_list = []
 
-    # Cek duplikasi di file agar tidak ada range yang sama
-    if any(item['range'] == range_val for item in data_list):
-        return
+        if any(item['range'] == range_val for item in data_list):
+            return
 
-    # Buat entri baru
-    new_entry = {
-        "range": range_val,
-        "country": country_name.upper(),
-        "emoji": get_country_emoji(country_name)
-    }
+        new_entry = {
+            "range": range_val,
+            "country": country_name.upper(),
+            "emoji": get_country_emoji(country_name)
+        }
+        data_list.append(new_entry)
+        if len(data_list) > 10:
+            data_list = data_list[-10:]
 
-    data_list.append(new_entry)
-
-    # Logika FIFO: Batas 10 data terbaru
-    if len(data_list) > 10:
-        data_list = data_list[-10:]
-
-    try:
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data_list, f, indent=2, ensure_ascii=False)
-        print(f"📂 [JSON] Berhasil simpan Facebook Range ke: {file_path}")
+        print(f"📂 [JSON] Facebook Saved: {range_val}")
     except Exception as e:
-        print(f"❌ Gagal simpan ke JSON: {e}")
+        print(f"❌ JSON Error: {e}")
 
 def format_live_message(range_val, count, country_name, service, full_message):
-    """Format pesan Telegram dengan perataan kolon dan counter."""
     country_emoji = get_country_emoji(country_name)
-    
-    formatted_range = format_phone_number(range_val)
-    
-    range_with_count = f"<code>{formatted_range}</code> ({count}x)" if count > 1 else f"<code>{formatted_range}</code>"
+    range_with_count = f"<code>{range_val}</code> ({count}x)" if count > 1 else f"<code>{range_val}</code>"
     full_message_escaped = full_message.replace('<', '&lt;').replace('>', '&gt;')
-    
-    # Menggunakan spasi untuk perataan (jika di-render di Telegram dengan font monospaced)
-    message = (
-        "🔥Live message new range\n"
-        "\n" 
+    return (
+        "🔥Live message new range\n\n" 
         f"📱Range    : {range_with_count}\n"
         f"{country_emoji}Country : {country_name}\n"
-        f"⚙️ Service : {service}\n"
-        "\n" 
+        f"⚙️ Service : {service}\n\n" 
         "🗯️Message Available :\n"
         f"<blockquote>{full_message_escaped}</blockquote>"
     )
-    return message
-
 
 async def cleanup_old_messages(app):
     global SENT_MESSAGES
     ten_minutes_ago = datetime.now() - timedelta(minutes=10)
-    
-    ranges_to_remove = []
-    for range_val, data in SENT_MESSAGES.items():
-        if data['timestamp'] < ten_minutes_ago:
-            ranges_to_remove.append(range_val)
-            print(f"🧹 Range {range_val} (Count: {data['count']}) sudah lebih dari 10 menit, menghapus dari pelacakan.")
-            
-    for range_val in ranges_to_remove:
-        del SENT_MESSAGES[range_val]
+    ranges_to_remove = [r for r, d in SENT_MESSAGES.items() if d['timestamp'] < ten_minutes_ago]
+    for r in ranges_to_remove:
+        del SENT_MESSAGES[r]
 
-
-# FUNGSI BARU: DELETE PESAN LAMA DAN KIRIM ULANG PESAN BARU
 async def delete_and_send_telegram_message(app, range_val, country, service, message_text):
     global SENT_MESSAGES
-    reply_markup = create_keyboard() 
-    
-    # Simpan ke JSON jika layanan adalah Facebook
+    # Panggil simpan JSON
     save_to_inline_json(range_val, country, service)
     
+    reply_markup = create_keyboard() 
     try:
         if range_val in SENT_MESSAGES:
-            # Langkah 1: Hapus pesan lama
             message_id = SENT_MESSAGES[range_val]['message_id']
-            try:
-                await app.bot.delete_message(
-                    chat_id=CHAT_ID,
-                    message_id=message_id
-                )
-                print(f"✅ Berhasil menghapus pesan lama ({message_id}) untuk Range: {range_val}")
-            except Exception as delete_e:
-                # Ini sering terjadi jika pesan sudah terlalu lama atau bot tidak bisa menghapus
-                if 'Message to delete not found' not in str(delete_e):
-                    print(f"❌ Gagal menghapus pesan Telegram lama: {delete_e}")
+            try: await app.bot.delete_message(chat_id=CHAT_ID, message_id=message_id)
+            except: pass
                 
-            # Langkah 2: Kirim pesan baru
-            sent_message = await app.bot.send_message(
-                chat_id=CHAT_ID,
-                text=message_text,
-                reply_markup=reply_markup,
-                parse_mode='HTML'
-            )
-            
-            # Langkah 3: Update message_id di SENT_MESSAGES
+            sent_message = await app.bot.send_message(chat_id=CHAT_ID, text=message_text, reply_markup=reply_markup, parse_mode='HTML')
             SENT_MESSAGES[range_val]['message_id'] = sent_message.message_id
-            
         else:
-            # Kirim pesan baru (untuk range yang baru pertama kali muncul)
-            sent_message = await app.bot.send_message(
-                chat_id=CHAT_ID,
-                text=message_text,
-                reply_markup=reply_markup,
-                parse_mode='HTML'
-            )
-            
-            # Tambahkan ke tracking
-            SENT_MESSAGES[range_val] = {
-                'message_id': sent_message.message_id,
-                'count': 1, 
-                'timestamp': datetime.now()
-            }
-            
+            sent_message = await app.bot.send_message(chat_id=CHAT_ID, text=message_text, reply_markup=reply_markup, parse_mode='HTML')
+            SENT_MESSAGES[range_val] = {'message_id': sent_message.message_id, 'count': 1, 'timestamp': datetime.now()}
     except Exception as e:
-        print(f"❌ Gagal mengirim pesan Telegram baru setelah penghapusan: {e}")
+        print(f"❌ Telegram Error: {e}")
 
 async def send_startup_message(app):
-    if not BOT_TOKEN or not CHAT_ID: return
     try:
-        await app.bot.send_message(
-            chat_id=CHAT_ID,
-            text="✅Ready to check the latest range (Playwright CONSOLE Monitor)",
-            parse_mode='HTML'
-        )
-        print("✅ Pesan startup terkirim.")
-    except Exception as e:
-        print(f"❌ Gagal mengirim pesan startup: {e}")
+        await app.bot.send_message(chat_id=CHAT_ID, text="✅Ready to check the latest range (Playwright CONSOLE Monitor)", parse_mode='HTML')
+    except: pass
 
 # ==================== PLAYWRIGHT/SCRAPER CLASS ====================
 
 class SMSMonitor:
-    
     def __init__(self, url=DASHBOARD_URL): 
         self.url = url
         self.browser = None
         self.page = None
         self.is_logged_in = False 
         self.CONSOLE_SELECTOR = ".group.flex.flex-col.sm\\:flex-row.sm\\:items-start.gap-3.p-3.rounded-lg"
-        # Menentukan layanan yang diizinkan (case-insensitive)
         self.ALLOWED_SERVICES = ['whatsapp', 'facebook']
-        # Menentukan negara yang DILARANG (Case-insensitive)
         self.BANNED_COUNTRIES = ['angola'] 
-
 
     async def initialize(self, p_instance):
         try:
-            print(f"🔗 Menghubungkan ke Chrome CDP di {CHROME_DEBUG_URL}...")
             self.browser = await p_instance.chromium.connect_over_cdp(CHROME_DEBUG_URL)
-            
-            # Mengambil konteks pertama
             context = self.browser.contexts[0]
             
-            # MODIFIKASI: Selalu buka tab baru dan langsung ke dashboard
-            print(f"🚀 Membuka tab baru dan menavigasi ke: {self.url}")
+            # DISINI UPGRADE BUKA TAB BARU
+            print(f"🚀 Membuka TAB BARU ke: {self.url}")
             self.page = await context.new_page()
             await self.page.goto(self.url, wait_until='networkidle', timeout=30000)
-
-            print(f"✅ Playwright berhasil membuka tab baru di: {self.url}")
+            
+            print(f"✅ Halaman Dashboard Terbuka.")
         except Exception as e:
-            print(f"❌ FATAL ERROR: Gagal terhubung ke Chrome CDP atau gagal buka tab baru. Error: {e}")
+            print(f"❌ CDP Error: {e}")
             raise
 
     async def check_url_login_status(self) -> bool:
         if not self.page: return False
         try:
-            current_url = self.page.url
-            # Cek apakah URL saat ini adalah dashboard
-            self.is_logged_in = current_url.startswith("https://x.mnitnetwork.com/mdashboard")
+            self.is_logged_in = self.page.url.startswith("https://x.mnitnetwork.com/mdashboard")
             return self.is_logged_in
-        except Exception:
-            self.is_logged_in = False 
-            return False
+        except: return False
 
     async def fetch_sms(self) -> List[Dict[str, Any]]:
-        """Mengambil dan memparsing data SMS dari konsol live (/console)."""
-        if not self.page or not self.is_logged_in: 
-            # print("⚠️ Playwright/Browser belum terhubung atau tidak login.")
-            return []
-            
-        # Pastikan halaman berada di URL dashboard/console yang benar
+        if not self.page: return []
         if self.page.url != self.url:
-            try:
-                print(f"Navigating to dashboard: {self.url}")
-                await self.page.goto(self.url, wait_until='networkidle', timeout=15000)
-            except Exception as e:
-                print(f"❌ Error navigating to console dashboard: {e}")
-                return []
+            try: await self.page.goto(self.url, wait_until='domcontentloaded', timeout=15000)
+            except: return []
                 
-        try:
-            # Tunggu selektor blok data muncul
-            await self.page.wait_for_selector(self.CONSOLE_SELECTOR, timeout=10000)
-        except PlaywrightTimeoutError: 
-             # print("❌ Timeout saat menunggu blok data konsol.")
-             return []
+        try: await self.page.wait_for_selector(self.CONSOLE_SELECTOR, timeout=5000)
+        except: return []
 
         messages = []
         elements = await self.page.locator(self.CONSOLE_SELECTOR).all()
 
         for element in elements:
             try:
+                # Country
+                c_el = element.locator(".flex-shrink-0 .text-\\[10px\\].text-slate-600.mt-1.font-mono")
+                c_raw = await c_el.inner_text() if await c_el.count() > 0 else ""
+                c_name = re.search(r'•\s*(.*)$', c_raw.strip()).group(1).strip() if "•" in c_raw else "Unknown"
+                if c_name.lower() in self.BANNED_COUNTRIES: continue 
                 
-                # 3. Country (Harus Diambil Pertama untuk Filter Banned)
-                country_element = element.locator(".flex-shrink-0 .text-\\[10px\\].text-slate-600.mt-1.font-mono")
-                country_full = await country_element.inner_text() if await country_element.count() > 0 else ""
-                country_match = re.search(r'•\s*(.*)$', country_full.strip())
-                country_name = country_match.group(1).strip() if country_match else "Unknown"
+                # Service
+                s_el = element.locator(".flex-grow.min-w-0 .text-xs.font-bold.text-blue-400")
+                s_raw = await s_el.inner_text() if await s_el.count() > 0 else ""
+                if not any(a in s_raw.lower() for a in self.ALLOWED_SERVICES): continue
+                service = clean_service_name(s_raw)
                 
-                # --- FILTER NEGARA DILARANG (Angola) ---
-                if country_name.lower() in self.BANNED_COUNTRIES:
-                    # print(f"🚫 Range diblokir karena negara DILARANG: {country_name}")
-                    continue 
+                # Range
+                # Perbaikan: Ambil teks mono terakhir yang biasanya berisi nomor XXX
+                p_el = element.locator(".flex-grow.min-w-0 .text-\\[10px\\].font-mono")
+                p_raw = await p_el.last.inner_text() if await p_el.count() > 0 else "N/A"
+                phone = clean_phone_number(p_raw) 
                 
-                # 1. Service (Raw)
-                service_element = element.locator(".flex-grow.min-w-0 .text-xs.font-bold.text-blue-400")
-                service_text_raw = await service_element.inner_text() if await service_element.count() > 0 else "N/A"
-                
-                # --- FILTER LAYANAN DIIZINKAN (WhatsApp/Facebook) ---
-                service_lower = service_text_raw.strip().lower()
-                
-                is_allowed = False
-                for allowed in self.ALLOWED_SERVICES:
-                     if allowed in service_lower:
-                         is_allowed = True
-                         break
-                
-                if not is_allowed:
-                    continue # Lewati jika bukan WhatsApp atau Facebook (atau mengandung kata itu)
-                
-                # Lanjutkan pembersihan nama service untuk ditampilkan
-                service = clean_service_name(service_text_raw)
-                
-                # 2. Range/Phone (Nomor Penuh XXX)
-                phone_element = element.locator(".flex-grow.min-w-0 .text-\\[10px\\].text-slate-500.font-mono")
-                phone_raw = await phone_element.inner_text() if await phone_element.count() > 0 else "N/A"
-                phone = clean_phone_number(phone_raw) 
-                
-                # 4. Message (FULL)
-                message_element = element.locator(".flex-grow.min-w-0 p")
-                message_text = await message_element.inner_text() if await message_element.count() > 0 else ""
-                full_message = message_text.replace('➜', '').strip()
+                # Message
+                m_el = element.locator(".flex-grow.min-w-0 p")
+                m_raw = await m_el.inner_text() if await m_el.count() > 0 else ""
+                full_message = m_raw.replace('➜', '').strip()
 
                 if 'XXX' in phone and full_message: 
-                    messages.append({
-                        "range_key": phone, 
-                        "country": country_name,
-                        "service": service, # Menggunakan nama yang sudah dibersihkan
-                        "raw_message": full_message 
-                    })
-            except Exception as e:
-                print(f"⚠️ Error memproses satu blok konsol: {e}")
-                continue
-                
+                    messages.append({"range_key": phone, "country": c_name, "service": service, "raw_message": full_message})
+            except: continue
         return messages
 
 monitor = SMSMonitor()
 
-# ==================== MAIN LOOP DENGAN LOGIKA DELETE & SEND ====================
-
 async def monitor_sms_loop(app):
-    global SENT_MESSAGES
-    
-    # 1. Inisialisasi Koneksi Playwright
     async with async_playwright() as p:
-        try:
-            await monitor.initialize(p)
-        except Exception:
-            await app.bot.send_message(chat_id=ADMIN_ID, text="🚨 <b>FATAL ERROR</b>: Gagal terhubung ke Chrome/Playwright. Cek log.", parse_mode='HTML')
-            return 
-        
-        # 2. Loop Utama
+        await monitor.initialize(p)
         while True:
             try:
-                # Periksa status login
                 await monitor.check_url_login_status() 
-
                 if monitor.is_logged_in:
-                    
-                    # A. Ambil data SMS (termasuk filter Service dan Banned Country)
                     msgs = await monitor.fetch_sms()
-                    
-                    # B. Filter pesan baru (Nomor Penuh XXX + Isi Pesan)
                     new_unique_logs = message_filter.filter(msgs) 
 
                     if new_unique_logs:
-                        print(f"✅ Ditemukan {len(new_unique_logs)} log unik baru. Memproses Live Counter (Delete & Send)...")
-                        
-                        # C. Proses Live Counter: Kelompokkan berdasarkan Range Key (Nomor Penuh XXX)
-                        grouped_logs = {}
-                        for log in new_unique_logs:
-                            grouped_logs[log['range_key']] = log 
-                        
-                        print(f"📦 Mengelompokkan ke {len(grouped_logs)} Range unik untuk diproses.")
-
+                        grouped_logs = {log['range_key']: log for log in new_unique_logs}
                         for range_val, log in grouped_logs.items():
-                            
-                            last_message = log['raw_message'] 
-                            
-                            # Logika Peningkatan Counter
                             if range_val in SENT_MESSAGES:
-                                old_data = SENT_MESSAGES[range_val]
-                                new_count = old_data['count'] + 1
-                                SENT_MESSAGES[range_val]['count'] = new_count
+                                SENT_MESSAGES[range_val]['count'] += 1
                                 SENT_MESSAGES[range_val]['timestamp'] = datetime.now()
                             else:
-                                new_count = 1
-
-                            # Siapkan pesan
-                            message_text = format_live_message(
-                                range_val, new_count, log['country'], log['service'], last_message
-                            )
+                                SENT_MESSAGES[range_val] = {'count': 1, 'timestamp': datetime.now()}
                             
-                            # Panggil fungsi DELETE & SEND
-                            await delete_and_send_telegram_message(app, range_val, log['country'], log['service'], message_text)
-                            
+                            text = format_live_message(range_val, SENT_MESSAGES[range_val]['count'], log['country'], log['service'], log['raw_message'])
+                            await delete_and_send_telegram_message(app, range_val, log['country'], log['service'], text)
                             await asyncio.sleep(0.5) 
 
-                    # D. Bersihkan pesan lama (hapus dari tracking SENT_MESSAGES setelah 10 menit)
                     await cleanup_old_messages(app)
-
                 else:
-                    print("⚠️ TIDAK LOGIN. Mencoba mengarahkan ke dashboard...")
-                    try:
-                        # Coba arahkan ke dashboard
-                        await monitor.page.goto(DASHBOARD_URL, wait_until='domcontentloaded', timeout=5000)
-                    except Exception:
-                         pass
-
+                    await monitor.page.goto(DASHBOARD_URL)
             except Exception as e:
-                print(f"❌ Error saat fetch/send di loop utama: {e.__class__.__name__}: {e}")
-
-            # Waktu tunggu antara cek (10 detik)
+                print(f"❌ Loop Error: {e}")
             await asyncio.sleep(10)
 
-# ==================== START EXECUTION ====================
-
 async def main():
-    if not BOT_TOKEN or not CHAT_ID:
-        print("❌ BOT_TOKEN atau CHAT_ID tidak ditemukan di bagian KONFIGURASI. Pastikan sudah benar.")
-        return
-
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    print("🤖 Telegram Bot terhubung.")
-    
     await send_startup_message(app)
-    
     await monitor_sms_loop(app)
 
 if __name__ == "__main__":
-    
-    print("Starting SMS Monitor Bot (Playwright CONSOLE Scraper - OTP Free)...")
-    
-    print("\n=======================================================")
-    print("     ⚠️  PENTING: JALANKAN CHROME/EDGE TERPISAH   ⚠️")
-    print("     Gunakan perintah ini di terminal terpisah:")
-    print('     chrome.exe --remote-debugging-port=9222 --user-data-dir="C:\\temp\\playwright_profile"')
-    print("=======================================================\n")
-
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\nBot shutting down...")
-    except Exception as e:
-        print(f"Error fatal: {e}")
+    try: asyncio.run(main())
+    except KeyboardInterrupt: pass
