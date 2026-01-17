@@ -113,7 +113,6 @@ def get_country_emoji(country_name: str) -> str:
 
 def clean_phone_number(phone):
     if not phone: return "N/A"
-    # Menghapus simbol :: atau spasi yang nempel di nomor
     cleaned = re.sub(r'[^0-9X]', '', phone) 
     return cleaned or phone
 
@@ -131,14 +130,12 @@ def clean_service_name(service):
     s_lower = service.strip().lower()
     for k, v in maps.items():
         if k in s_lower: return v
-    if s_lower in ['ваш', 'your', 'service', 'code', 'pin']: return "Unknown Service"
     return service.strip().title()
 
 def create_keyboard():
     keyboard = [[InlineKeyboardButton("📞GetNumber", url="https://t.me/myzuraisgoodbot?start=ZuraBot")]]
     return InlineKeyboardMarkup(keyboard)
 
-# --- FUNGSI SIMPAN JSON (FACEBOOK ONLY) ---
 def save_to_inline_json(range_val, country_name, service):
     if service.lower() != "facebook":
         return
@@ -160,9 +157,7 @@ def save_to_inline_json(range_val, country_name, service):
             return
 
         new_entry = {
-            "range": range_val,
-            "country": country_name.upper(),
-            "emoji": get_country_emoji(country_name)
+            "range": range_val, "country": country_name.upper(), "emoji": get_country_emoji(country_name)
         }
         data_list.append(new_entry)
         if len(data_list) > 10:
@@ -196,21 +191,30 @@ async def cleanup_old_messages(app):
 
 async def delete_and_send_telegram_message(app, range_val, country, service, message_text):
     global SENT_MESSAGES
-    # Panggil simpan JSON
     save_to_inline_json(range_val, country, service)
-    
     reply_markup = create_keyboard() 
+    
     try:
-        if range_val in SENT_MESSAGES:
-            message_id = SENT_MESSAGES[range_val]['message_id']
-            try: await app.bot.delete_message(chat_id=CHAT_ID, message_id=message_id)
-            except: pass
-                
-            sent_message = await app.bot.send_message(chat_id=CHAT_ID, text=message_text, reply_markup=reply_markup, parse_mode='HTML')
-            SENT_MESSAGES[range_val]['message_id'] = sent_message.message_id
-        else:
-            sent_message = await app.bot.send_message(chat_id=CHAT_ID, text=message_text, reply_markup=reply_markup, parse_mode='HTML')
-            SENT_MESSAGES[range_val] = {'message_id': sent_message.message_id, 'count': 1, 'timestamp': datetime.now()}
+        # CEK APAKAH SUDAH ADA MESSAGE_ID UNTUK DIHAPUS
+        if range_val in SENT_MESSAGES and 'message_id' in SENT_MESSAGES[range_val]:
+            old_mid = SENT_MESSAGES[range_val]['message_id']
+            try:
+                await app.bot.delete_message(chat_id=CHAT_ID, message_id=old_mid)
+            except:
+                pass
+        
+        # KIRIM PESAN BARU
+        sent_message = await app.bot.send_message(
+            chat_id=CHAT_ID, text=message_text, reply_markup=reply_markup, parse_mode='HTML'
+        )
+        
+        # UPDATE TRACKING
+        if range_val not in SENT_MESSAGES:
+            SENT_MESSAGES[range_val] = {'count': 1}
+            
+        SENT_MESSAGES[range_val]['message_id'] = sent_message.message_id
+        SENT_MESSAGES[range_val]['timestamp'] = datetime.now()
+        
     except Exception as e:
         print(f"❌ Telegram Error: {e}")
 
@@ -235,12 +239,9 @@ class SMSMonitor:
         try:
             self.browser = await p_instance.chromium.connect_over_cdp(CHROME_DEBUG_URL)
             context = self.browser.contexts[0]
-            
-            # DISINI UPGRADE BUKA TAB BARU
             print(f"🚀 Membuka TAB BARU ke: {self.url}")
             self.page = await context.new_page()
             await self.page.goto(self.url, wait_until='networkidle', timeout=30000)
-            
             print(f"✅ Halaman Dashboard Terbuka.")
         except Exception as e:
             print(f"❌ CDP Error: {e}")
@@ -267,25 +268,20 @@ class SMSMonitor:
 
         for element in elements:
             try:
-                # Country
                 c_el = element.locator(".flex-shrink-0 .text-\\[10px\\].text-slate-600.mt-1.font-mono")
                 c_raw = await c_el.inner_text() if await c_el.count() > 0 else ""
                 c_name = re.search(r'•\s*(.*)$', c_raw.strip()).group(1).strip() if "•" in c_raw else "Unknown"
                 if c_name.lower() in self.BANNED_COUNTRIES: continue 
                 
-                # Service
                 s_el = element.locator(".flex-grow.min-w-0 .text-xs.font-bold.text-blue-400")
                 s_raw = await s_el.inner_text() if await s_el.count() > 0 else ""
                 if not any(a in s_raw.lower() for a in self.ALLOWED_SERVICES): continue
                 service = clean_service_name(s_raw)
                 
-                # Range
-                # Perbaikan: Ambil teks mono terakhir yang biasanya berisi nomor XXX
                 p_el = element.locator(".flex-grow.min-w-0 .text-\\[10px\\].font-mono")
                 p_raw = await p_el.last.inner_text() if await p_el.count() > 0 else "N/A"
                 phone = clean_phone_number(p_raw) 
                 
-                # Message
                 m_el = element.locator(".flex-grow.min-w-0 p")
                 m_raw = await m_el.inner_text() if await m_el.count() > 0 else ""
                 full_message = m_raw.replace('➜', '').strip()
@@ -308,11 +304,10 @@ async def monitor_sms_loop(app):
                     new_unique_logs = message_filter.filter(msgs) 
 
                     if new_unique_logs:
-                        grouped_logs = {log['range_key']: log for log in new_unique_logs}
-                        for range_val, log in grouped_logs.items():
+                        for log in new_unique_logs:
+                            range_val = log['range_key']
                             if range_val in SENT_MESSAGES:
                                 SENT_MESSAGES[range_val]['count'] += 1
-                                SENT_MESSAGES[range_val]['timestamp'] = datetime.now()
                             else:
                                 SENT_MESSAGES[range_val] = {'count': 1, 'timestamp': datetime.now()}
                             
