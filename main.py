@@ -86,17 +86,14 @@ def create_keyboard():
 # --- JSON STORAGE LOGIC (Dinamis Path) ---
 
 def save_to_inline_json(range_val, country_name, service):
-    """Menyimpan data Facebook ke ../get/inline.json (Max 10 FIFO)"""
     if service.lower() != "facebook":
         return
 
-    # Logika Path: Naik satu tingkat dari folder 'range' ke 'Administrator', lalu masuk ke 'get'
-    current_dir = os.path.dirname(os.path.abspath(__file__)) # folder range
-    parent_dir = os.path.dirname(current_dir) # folder Administrator
+    current_dir = os.path.dirname(os.path.abspath(__file__)) 
+    parent_dir = os.path.dirname(current_dir) 
     target_folder = os.path.join(parent_dir, 'get')
     file_path = os.path.join(target_folder, 'inline.json')
 
-    # Pastikan folder 'get' ada
     if not os.path.exists(target_folder):
         os.makedirs(target_folder, exist_ok=True)
 
@@ -108,7 +105,6 @@ def save_to_inline_json(range_val, country_name, service):
         except:
             data_list = []
 
-    # Hindari duplikat range di dalam file
     if any(item['range'] == range_val for item in data_list):
         return
 
@@ -119,15 +115,13 @@ def save_to_inline_json(range_val, country_name, service):
     }
 
     data_list.append(new_entry)
-
-    # Batasi 10 data (Hapus yang paling lama/paling atas)
     if len(data_list) > 10:
         data_list = data_list[-10:]
 
     try:
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data_list, f, indent=2, ensure_ascii=False)
-        print(f"📂 [JSON] Update: {file_path}")
+        print(f"📂 [JSON] Facebook Range Saved: {range_val}")
     except Exception as e:
         print(f"❌ JSON Error: {e}")
 
@@ -150,10 +144,7 @@ def format_live_message(range_val, count, country_name, service, full_message):
 
 async def delete_and_send_telegram_message(app, range_val, country, service, message_text):
     global SENT_MESSAGES
-    
-    # Simpan ke file JSON (Hanya Facebook)
     save_to_inline_json(range_val, country, service)
-    
     kb = create_keyboard() 
     try:
         if range_val in SENT_MESSAGES:
@@ -177,29 +168,37 @@ async def cleanup_old_messages():
     to_rem = [r for r, d in SENT_MESSAGES.items() if d['timestamp'] < limit]
     for r in to_rem: del SENT_MESSAGES[r]
 
-# ==================== SCRAPER ====================
+# ==================== UPGRADED SCRAPER ====================
 
 class SMSMonitor:
     def __init__(self): 
         self.url = DASHBOARD_URL
         self.page = None
-        self.is_logged_in = False 
         self.SELECTOR = ".group.flex.flex-col.sm\\:flex-row.sm\\:items-start.gap-3.p-3.rounded-lg"
         self.ALLOWED = ['whatsapp', 'facebook']
         self.BANNED = ['angola'] 
 
     async def initialize(self, p_instance):
+        """Menghubungkan ke Chrome dan membuka TAB BARU otomatis"""
+        print(f"🔗 Menghubungkan ke Chrome di {CHROME_DEBUG_URL}...")
         browser = await p_instance.chromium.connect_over_cdp(CHROME_DEBUG_URL)
+        
+        # Selalu buat tab baru agar URL terbuka segar saat script dijalankan
         context = browser.contexts[0]
-        self.page = context.pages[0] if context.pages else await context.new_page()
+        self.page = await context.new_page()
+        
+        print(f"🚀 Membuka Dashboard: {self.url}")
+        await self.page.goto(self.url, wait_until='networkidle', timeout=30000)
 
     async def fetch_sms(self) -> List[Dict[str, Any]]:
         if not self.page: return []
+        
+        # Jika halaman tertutup atau navigasi melenceng, balikkan ke Dashboard
         if self.page.url != self.url:
-            try: await self.page.goto(self.url, wait_until='networkidle', timeout=15000)
+            try: await self.page.goto(self.url, wait_until='domcontentloaded', timeout=10000)
             except: return []
                 
-        try: await self.page.wait_for_selector(self.SELECTOR, timeout=10000)
+        try: await self.page.wait_for_selector(self.SELECTOR, timeout=5000)
         except: return []
 
         results = []
@@ -207,23 +206,19 @@ class SMSMonitor:
 
         for el in elements:
             try:
-                # Country
                 c_el = el.locator(".flex-shrink-0 .text-\\[10px\\].text-slate-600.mt-1.font-mono")
                 c_raw = await c_el.inner_text() if await c_el.count() > 0 else ""
                 c_name = re.search(r'•\s*(.*)$', c_raw.strip()).group(1).strip() if "•" in c_raw else "Unknown"
                 if c_name.lower() in self.BANNED: continue 
                 
-                # Service
                 s_el = el.locator(".flex-grow.min-w-0 .text-xs.font-bold.text-blue-400")
                 s_raw = await s_el.inner_text() if await s_el.count() > 0 else ""
                 if not any(a in s_raw.lower() for a in self.ALLOWED): continue
                 service = clean_service_name(s_raw)
                 
-                # Phone
                 p_el = el.locator(".flex-grow.min-w-0 .text-\\[10px\\].text-slate-500.font-mono")
                 phone = clean_phone_number(await p_el.inner_text() if await p_el.count() > 0 else "")
                 
-                # Message
                 m_el = el.locator(".flex-grow.min-w-0 p")
                 msg = (await m_el.inner_text()).replace('➜', '').strip()
 
@@ -238,17 +233,22 @@ monitor = SMSMonitor()
 
 async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    print("🤖 Monitoring Started...")
+    print("🤖 Monitoring System Active.")
     
     async with async_playwright() as p:
-        await monitor.initialize(p)
+        try:
+            await monitor.initialize(p)
+        except Exception as e:
+            print(f"❌ Gagal inisialisasi browser: {e}")
+            print("Pastikan Chrome sudah jalan dengan port 9222!")
+            return
+
         while True:
             try:
                 msgs = await monitor.fetch_sms()
                 new_logs = message_filter.filter(msgs) 
 
                 if new_logs:
-                    # Ambil data unik per range terbaru saja
                     grouped = {log['range_key']: log for log in new_logs}
                     for r_val, log in grouped.items():
                         if r_val in SENT_MESSAGES:
@@ -266,4 +266,4 @@ async def main():
 
 if __name__ == "__main__":
     try: asyncio.run(main())
-    except KeyboardInterrupt: pass
+    except KeyboardInterrupt: print("Bot Stopped.")
