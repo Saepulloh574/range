@@ -137,10 +137,21 @@ def create_keyboard():
     keyboard = [[InlineKeyboardButton("📞GetNumber", url="https://t.me/myzuraisgoodbot?start=ZuraBot")]]
     return InlineKeyboardMarkup(keyboard)
 
-# --- FUNGSI SIMPAN JSON DENGAN UNICODE ESCAPE ---
+# --- FUNGSI SIMPAN JSON DENGAN STRUKTUR BARU (WA/FB) ---
 def save_to_inline_json(range_val, country_name, service):
-    if service.lower() != "facebook":
-        return
+    # Mapping nama service menjadi singkatan
+    service_map = {
+        'whatsapp': 'WA',
+        'facebook': 'FB'
+    }
+    
+    # Cek apakah service yang masuk ada di mapping kita (case insensitive)
+    service_key = service.lower()
+    if service_key not in service_map:
+        return # Jika bukan WhatsApp atau Facebook, tidak disimpan (skip)
+
+    short_service = service_map[service_key]
+
     try:
         current_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(current_dir)
@@ -153,29 +164,38 @@ def save_to_inline_json(range_val, country_name, service):
         data_list = []
         if os.path.exists(file_path):
             with open(file_path, 'r', encoding='utf-8') as f:
-                data_list = json.load(f)
+                try:
+                    data_list = json.load(f)
+                except json.JSONDecodeError:
+                    data_list = []
 
+        # Cek duplikasi range agar tidak dobel di file
         if any(item['range'] == range_val for item in data_list):
             return
 
-        # Simpan emoji dalam variabel dulu
+        # Ambil emoji
         emoji_char = get_country_emoji(country_name)
 
+        # Struktur baru sesuai request
         new_entry = {
             "range": range_val, 
             "country": country_name.upper(), 
-            "emoji": emoji_char
+            "emoji": emoji_char,
+            "service": short_service
         }
+        
         data_list.append(new_entry)
         
+        # Simpan max 10 entry terakhir
         if len(data_list) > 10:
             data_list = data_list[-10:]
 
-        # MENGGUNAKAN ensure_ascii=True agar emoji disimpan sebagai \ud83c...
+        # Simpan ke file
         with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data_list, f, indent=2, ensure_ascii=True)
+            # ensure_ascii=False agar emoji terlihat di text editor
+            json.dump(data_list, f, indent=2, ensure_ascii=False)
             
-        print(f"📂 [JSON] Facebook Saved (Unicode): {range_val}")
+        print(f"📂 [JSON] {short_service} Saved: {range_val}")
     except Exception as e:
         print(f"❌ JSON Error: {e}")
 
@@ -201,7 +221,10 @@ async def cleanup_old_messages(app):
 
 async def delete_and_send_telegram_message(app, range_val, country, service, message_text):
     global SENT_MESSAGES
+    
+    # Panggil fungsi save json yang sudah diupgrade
     save_to_inline_json(range_val, country, service)
+    
     reply_markup = create_keyboard() 
     
     try:
